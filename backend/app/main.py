@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.routers import (
     bundle,
+    dashboard,
     execute,
     followups,
     insights,
@@ -32,6 +33,7 @@ app.include_router(profile.router)
 app.include_router(quality.router)
 app.include_router(questions.router)
 app.include_router(bundle.router)
+app.include_router(dashboard.router)
 app.include_router(plan.router)
 app.include_router(execute.router)
 app.include_router(validate.router)

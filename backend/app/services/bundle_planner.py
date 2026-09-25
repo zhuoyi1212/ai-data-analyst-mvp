@@ -3,7 +3,7 @@
 三阶段流水线：
     Candidate Generation（穷举所有「字段条件 × 分析类型」候选，允许冗余）
         → Selection（去重 + 多样性选择；Phase 1 用规则，Phase 2 可替换为 LLM）
-        → AnalysisBundle（4-8 个高价值 View，每个内嵌既有 10 算子 AnalysisPlan）
+        → AnalysisBundle（4-8 个高价值 View，每个内嵌既有 11 算子 AnalysisPlan）
 
 多样性目标（用户明确要求）：
     1. metric diversity    —— 不只围绕一个主指标；存在 Sales/Profit 等多个高价值指标时
@@ -34,6 +34,7 @@ from app.schemas.bundle import (
 from app.schemas.common import AggFunc
 from app.schemas.dictionary import DataDictionary, FieldProfile
 from app.schemas.plan import AnalysisPlan
+from app.services.derived_metrics import detect_derived_metrics
 from app.services.offline_fallback import (
     _granularity,
     _high_cardinality_dimension,
@@ -86,7 +87,7 @@ class Candidate:
     type: ViewType
     title: str
     question: str
-    op: str  # 10 算子白名单中的算子名
+    op: str  # 11 算子白名单中的算子名
     hint: dict[str, Any]
     fields: list[str]
     metric_fields: list[str]
@@ -228,6 +229,36 @@ class CandidateGenerator:
                     priority_group=2,
                 ))
 
+        # 3.5) profitability：确定性派生比率（如利润率 = ΣProfit/ΣSales）。
+        #      公式来自规则注册表，数值由 derive_ratio 算子计算，LLM 不参与。
+        #      锚点为低基数结构维度（候选全生成，锚点选择在 Selector）。
+        for spec in detect_derived_metrics(dictionary):
+            for d in low_dims:
+                out.append(Candidate(
+                    type=ViewType.profitability,
+                    title=f"各「{d.name}」的「{spec.label}」",
+                    question=(
+                        f"各「{d.name}」的「{spec.label}」"
+                        f"（Σ{spec.numerator}÷Σ{spec.denominator}）如何？"
+                    ),
+                    op="derive_ratio",
+                    hint={
+                        "numerator": spec.numerator,
+                        "denominator": spec.denominator,
+                        "dimension": d.name,
+                    },
+                    fields=[spec.numerator, spec.denominator, d.name],
+                    metric_fields=[spec.numerator, spec.denominator],
+                    dimension_fields=[d.name],
+                    family_key=("ratio", d.name, spec.key),
+                    reason=(
+                        f"规则探测到确定性派生指标「{spec.label}」"
+                        f"=Σ{spec.numerator}/Σ{spec.denominator}（先聚合后相除），"
+                        f"按「{d.name}」诊断盈利结构，能识别收入大但亏损的成员"
+                    ),
+                    priority_group=3,
+                ))
+
         # 4) relationship：优先字典探测到的相关对；否则在快照上确定性计算
         #    （含率类指标对优先、|r| 显著才采用）；样本不足不生成
         pair, pair_computed = self._best_correlation_pair(dictionary, metrics, df)
@@ -341,8 +372,11 @@ class RuleBundleSelector:
     规则（确定性、可解释，每条入选 view 带 selection_reason）：
       A. 核心骨架（主指标驱动）：overview×(1~2) → trend → comparison
          → breakdown → ranking，分布三件套落在不同维度；
+         当规则探测到确定性派生比率（如利润率）时，profitability 视角替换
+         主指标 ranking 槽位（锚点 breakdown → comparison）；
       B. 去重铁律：同一 (dimension, metric) 不允许仅换 share/group_by/top_n 重复
          （family_key 拦截）；同维度只允许在「跨指标对照」时用不同指标再进一次；
+         派生比率（derive_ratio）是同维度允许的第 3 视角，不占原始指标冗余额度；
       C. 余量按边际价值顺序填充到上限 8：
            1) 跨指标对照：第二高价值指标在主指标已用维度上复算（同维度不同指标，
               指标背离/量利错位等跨 View 洞察的基础，优先于 anomaly）；
@@ -433,7 +467,38 @@ class RuleBundleSelector:
         take_one(ViewType.trend, m0)
         take_one(ViewType.comparison, m0)
         take_one(ViewType.breakdown, m0)
-        take_one(ViewType.ranking, m0)
+
+        # profitability 槽位策略（Phase 2 计划批准）：探测到确定性派生比率时，
+        # 比率视角替换主指标 ranking 槽位（锚点 = breakdown 维度，其次 comparison）。
+        # 候选在对照之后再入选，使顺序为 结构 → 对照 → 利润率。
+        prof_pool = by_type.get(ViewType.profitability, [])
+
+        def _anchor_dims() -> list[str]:
+            anchors: list[str] = []
+            for want in (ViewType.breakdown, ViewType.comparison):
+                for d in chosen:
+                    if (
+                        d.type is want
+                        and d.metric_fields
+                        and d.metric_fields[0] == m0
+                        and d.dimension_fields
+                    ):
+                        anchors.append(d.dimension_fields[0])
+            return list(dict.fromkeys(anchors))
+
+        def _profitability_on_anchors() -> Candidate | None:
+            anchors = set(_anchor_dims())
+            if not anchors:
+                return None
+            for c in prof_pool:
+                if c.dimension_fields and c.dimension_fields[0] in anchors:
+                    return c
+            return None
+
+        prof_pick = _profitability_on_anchors()
+        # 比率视角将占用 ranking 槽位；无可用锚点时 ranking 照常填充
+        if prof_pick is None:
+            take_one(ViewType.ranking, m0)
 
         # C-1. 跨指标对照：第二高价值指标（价值分 ≥3）在主指标已用分布维度上复算。
         #      锚点维度优先 breakdown（结构对照最容易读出量利背离），其次 comparison；
@@ -480,6 +545,32 @@ class RuleBundleSelector:
                 return False
 
             _try_contrast()
+
+        # profitability 正式入选：锚点 breakdown → comparison，顺序紧随跨指标对照，
+        # 使阅读路径为 主指标结构 → 第二指标对照 → 派生比率（同维度允许第 3 个视角，
+        # 但必须是派生比率，不占原始指标冗余额度）。
+        if prof_pick is not None:
+            for dim in _anchor_dims():
+                hit = next(
+                    (
+                        c
+                        for c in prof_pool
+                        if c.dimension_fields and c.dimension_fields[0] == dim
+                    ),
+                    None,
+                )
+                if hit is None:
+                    continue
+                num, den = hit.metric_fields[0], hit.metric_fields[1]
+                if take(
+                    hit,
+                    reason=(
+                        f"确定性派生比率「{hit.title}」（Σ{num}/Σ{den}，先聚合后相除，"
+                        f"LLM 不参与计算）在同一锚点维度「{dim}」上与销售结构、利润对照"
+                        f"形成第三视角，替换主指标 ranking 槽位以提升信息价值"
+                    ),
+                ):
+                    break
 
         # C-2/3. 独特分析类型：关系 → 异常
         take_one(ViewType.relationship)

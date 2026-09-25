@@ -36,6 +36,11 @@ OP_META: dict[str, dict] = {
         "terminal": True,
         "chart": ChartType.line_outlier,
     },
+    "derive_ratio": {
+        "label": "派生比率",
+        "terminal": True,
+        "chart": ChartType.bar,  # 无轴单值由调用方按 KPI 取用；维度/时间序列为柱状/折线口径
+    },
 }
 
 # 末端算子（除 filter 透传外的所有算子）→ 图表类型
@@ -73,7 +78,14 @@ def step_columns(step: PlanStep) -> list[str]:
     if step.op == "correlation":
         return [p.column_x, p.column_y]
     if step.op == "outlier_flag":
-        return [p.column] + ([step.date_column] if getattr(step, "date_column", None) else [])
+        return [p.column] + ([step.date_column] if getattr(p, "date_column", None) else [])
+    if step.op == "derive_ratio":
+        cols = [p.numerator, p.denominator]
+        if p.dimension:
+            cols.append(p.dimension)
+        if p.date_column:
+            cols.append(p.date_column)
+        return cols
     return []
 
 
@@ -137,6 +149,22 @@ def validate_plan_against_fields(
                 if f and f.semantic_type != SemanticType.date:
                     errors.append(
                         f"步骤 {step.step_id} 的日期字段「{dc}」不是已确认的日期字段。"
+                    )
+
+        if step.op == "derive_ratio":
+            _require_metric(errors, available, p.numerator, step.step_id)
+            _require_metric(errors, available, p.denominator, step.step_id)
+            if p.dimension:
+                d = available.get(p.dimension)
+                if d and d.semantic_type not in DIMENSION_SEMANTICS:
+                    errors.append(
+                        f"步骤 {step.step_id} 的分组字段「{p.dimension}」不是维度类型字段。"
+                    )
+            if p.date_column:
+                f = available.get(p.date_column)
+                if f and f.semantic_type != SemanticType.date:
+                    errors.append(
+                        f"步骤 {step.step_id} 的日期字段「{p.date_column}」不是已确认的日期字段。"
                     )
 
         if step.op == "filter":

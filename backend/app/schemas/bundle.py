@@ -6,7 +6,7 @@
            └─ ViewExecutionResult（该视角执行后的状态/台账/结果摘要）
 
 设计要点：
-- AnalysisView 内嵌的仍是既有 schemas.plan.AnalysisPlan（10 算子白名单不变），
+- AnalysisView 内嵌的仍是既有 schemas.plan.AnalysisPlan（Phase 2 起 11 算子白名单），
   Bundle 层只负责「一次规划并执行多个 Plan」，不改变算子契约；
 - chart 类型 Phase 1 复用 ChartType 枚举；完整 ChartSpec 在 Phase 2 定义；
 - provenance 标记每个 view 的来源（candidate 规则），便于后续 LLM Selection 替换。
@@ -48,7 +48,7 @@ VIEW_CHART: dict[ViewType, ChartType] = {
     ViewType.ranking: ChartType.bar,
     ViewType.relationship: ChartType.scatter,
     ViewType.anomaly: ChartType.line_outlier,
-    ViewType.profitability: ChartType.metric,
+    ViewType.profitability: ChartType.bar,  # 各维度成员的派生比率（利润率）
 }
 
 

@@ -1,4 +1,4 @@
-"""10 个有限算子的 pandas 实现（FR-6 / 附录 A）。
+"""有限算子的 pandas 实现（FR-6 / 附录 A；Phase 2 起共 11 个，含 derive_ratio）。
 
 红线：本模块是系统中**唯一**的数值来源。不 import 任何 LLM/HTTP 模块，
 不接受代码/表达式字符串；所有输入均为强类型 params。
@@ -340,6 +340,80 @@ def op_outlier_flag(df: pd.DataFrame, p: Any) -> OpResult:
     })
 
 
+# ---------------------------------------------------------------- 11. derive_ratio
+
+def _ratio_frame(
+    num: pd.Series, den: pd.Series
+) -> tuple[float, float, float | None]:
+    """整体 ratio-of-sums；分母为 0/空时比率为 None。"""
+    total_n = float(num.sum())
+    total_d = float(den.sum())
+    ratio = None if total_d == 0 or np.isnan(total_d) else total_n / total_d
+    return total_n, total_d, ratio
+
+
+def op_derive_ratio(df: pd.DataFrame, p: Any) -> OpResult:
+    """确定性派生比率：Σnumerator / Σdenominator（先聚合后相除）。
+
+    - 无轴：整体单值（KPI 利润率等）；
+    - dimension：每个维度成员的比率（分母为 0/空的成员输出 null，不抛断整批）；
+    - date_column + granularity：按时间周期的比率序列。
+    严禁对行级 numerator/denominator 先求比率再平均（口径错误）。
+    """
+    num = _numeric_series(df, p.numerator)
+    den = _numeric_series(df, p.denominator)
+    label = f"「{p.numerator}」÷「{p.denominator}」"
+
+    if p.dimension:
+        _require_column(df, p.dimension)
+        work = pd.DataFrame({p.dimension: df[p.dimension].to_numpy(),
+                             "_n": num.to_numpy(), "_d": den.to_numpy()})
+        g = work.groupby(p.dimension, dropna=False)[["_n", "_d"]].sum(min_count=1)
+        g[_VALUE_COL] = g["_n"] / g["_d"].replace({0: np.nan})
+        out = (g.reset_index()[[p.dimension, _VALUE_COL]]
+               .sort_values(_VALUE_COL, ascending=False, na_position="last")
+               .reset_index(drop=True))
+        tn, td, overall = _ratio_frame(num, den)
+        formula = f"{label} 按「{p.dimension}」先聚合后相除的比率"
+        return OpResult(out, formula, {
+            "dimension": p.dimension, "groups": len(out),
+            "null_member_count": int(g[_VALUE_COL].isna().sum()),
+            "total_numerator": tn, "total_denominator": td, "overall_ratio": overall,
+        })
+
+    if p.date_column:
+        work, nat = _period_series(df, p.date_column)
+        freq = _PANDAS_FREQ[p.granularity.value]
+        sn = pd.to_numeric(work[p.numerator], errors="coerce")
+        sd = pd.to_numeric(work[p.denominator], errors="coerce")
+        tmp = pd.DataFrame({"_p": work[p.date_column].dt.to_period(freq),
+                            "_n": sn.to_numpy(), "_d": sd.to_numpy()})
+        g = tmp.groupby("_p")[["_n", "_d"]].sum(min_count=1)
+        g[_VALUE_COL] = g["_n"] / g["_d"].replace({0: np.nan})
+        full_index = pd.period_range(g.index.min(), g.index.max(), freq=freq)
+        g = g.reindex(full_index)
+        out = pd.DataFrame({
+            p.date_column: [per.start_time for per in g.index],
+            _VALUE_COL: g[_VALUE_COL].to_numpy(),
+        })
+        formula = (f"{label} 按"
+                   f"{ {'day':'日','week':'周','month':'月','quarter':'季','year':'年'}[p.granularity.value] }"
+                   f"先聚合后相除的比率")
+        return OpResult(out, formula, {
+            "date_column": p.date_column, "periods": len(out),
+            "null_period_count": int(g[_VALUE_COL].isna().sum()),
+            "null_dates_excluded": nat,
+        })
+
+    tn, td, ratio = _ratio_frame(num, den)
+    out = pd.DataFrame({_VALUE_COL: [ratio]})
+    formula = f"{label} 整体比率（合计 ÷ 合计）"
+    return OpResult(out, formula, {
+        "value": ratio, "total_numerator": tn, "total_denominator": td,
+        "denominator_zero": ratio is None,
+    })
+
+
 _DISPATCH: dict[str, Callable[[pd.DataFrame, Any], OpResult]] = {
     "filter": op_filter,
     "aggregate": op_aggregate,
@@ -351,6 +425,7 @@ _DISPATCH: dict[str, Callable[[pd.DataFrame, Any], OpResult]] = {
     "compare_groups": op_compare_groups,
     "correlation": op_correlation,
     "outlier_flag": op_outlier_flag,
+    "derive_ratio": op_derive_ratio,
 }
 
 

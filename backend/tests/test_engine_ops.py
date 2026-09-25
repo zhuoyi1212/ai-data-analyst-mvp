@@ -1,4 +1,4 @@
-"""TR-10.1/10.2/10.3：10 算子手算黄金值、图表映射、引擎零 LLM 依赖。"""
+"""TR-10.1/10.2/10.3：11 算子手算黄金值、图表映射、引擎零 LLM 依赖。"""
 from __future__ import annotations
 
 import pathlib
@@ -22,6 +22,8 @@ from app.schemas.plan import (
     CompareGroupsStep,
     CorrelationParams,
     CorrelationStep,
+    DeriveRatioParams,
+    DeriveRatioStep,
     FilterParams,
     FilterStep,
     GroupByParams,
@@ -37,6 +39,7 @@ from app.schemas.plan import (
     TopNParams,
     TopNStep,
 )
+from pydantic import ValidationError
 from app.services.engine import ops
 from app.services.engine.catalog import CHART_BY_OP, OP_META
 from app.services.engine.ops import EngineError, run_step
@@ -224,9 +227,89 @@ def test_engine_package_has_no_llm_import():
     ("compare_groups", ChartType.grouped_bar),
     ("correlation", ChartType.scatter),
     ("outlier_flag", ChartType.line_outlier),
+    ("derive_ratio", ChartType.bar),
 ])
 def test_chart_mapping_matches_appendix_a(op, chart):
     """TR-10.3：末端算子 → 图表与附录 A 完全一致。"""
     assert CHART_BY_OP[op] == chart
     assert OP_META[op]["chart"] == chart
     assert OP_META["filter"]["terminal"] is False
+
+
+# ------------------------------------------------------------- derive_ratio
+
+def _ratio_step(**kw):
+    return DeriveRatioStep(
+        step_id="s", op="derive_ratio",
+        params=DeriveRatioParams(**kw),
+    )
+
+
+def test_derive_ratio_overall_is_ratio_of_sums_not_average_of_ratios():
+    """口径铁律：Σ利润/Σ销售；组间规模悬殊时与行级比率均值结论可以符号相反。"""
+    df = pd.DataFrame({
+        "品类": ["A", "B"],
+        "Profit": [100.0, -50.0],
+        "Sales": [1000.0, 100.0],
+    })
+    r = run_step(df, _ratio_step(numerator="Profit", denominator="Sales"))
+    assert r.df.loc[0, "value"] == pytest.approx(50.0 / 1100.0)
+    # 行级比率均值 = (0.1 + -0.5) / 2 = -0.2，必须与结果不同
+    assert r.df.loc[0, "value"] != pytest.approx(-0.2)
+    assert r.summary["total_numerator"] == pytest.approx(50.0)
+    assert r.summary["total_denominator"] == pytest.approx(1100.0)
+
+
+def test_derive_ratio_by_dimension_sorted_and_null_member():
+    df = pd.DataFrame({
+        "品类": ["A", "B", "C"],
+        "Profit": [100.0, -50.0, 30.0],
+        "Sales": [1000.0, 100.0, 0.0],  # C 分母为 0 → null，不抛错
+    })
+    r = run_step(df, _ratio_step(numerator="Profit", denominator="Sales",
+                                 dimension="品类"))
+    rows = r.df.set_index("品类")["value"]
+    assert rows["A"] == pytest.approx(0.1)
+    assert rows["B"] == pytest.approx(-0.5)
+    assert pd.isna(rows["C"])
+    # 按比率降序：A → B → C(null 最后)
+    assert r.df["品类"].tolist() == ["A", "B", "C"]
+    assert r.summary["null_member_count"] == 1
+    assert r.summary["overall_ratio"] == pytest.approx(80.0 / 1100.0)
+
+
+def test_derive_ratio_by_time_periods():
+    df = pd.DataFrame({
+        "日期": pd.to_datetime(["2024-01-10", "2024-02-15"]),
+        "Profit": [10.0, 30.0],
+        "Sales": [100.0, 100.0],
+    })
+    r = run_step(df, _ratio_step(
+        numerator="Profit", denominator="Sales",
+        date_column="日期", granularity=TimeGranularity.month))
+    assert len(r.df) == 2
+    assert r.df["value"].tolist() == pytest.approx([0.1, 0.3])
+
+
+def test_derive_ratio_overall_zero_denominator_is_null_not_raise():
+    df = pd.DataFrame({"Profit": [10.0, 20.0], "Sales": [0.0, 0.0]})
+    r = run_step(df, _ratio_step(numerator="Profit", denominator="Sales"))
+    assert pd.isna(r.df.loc[0, "value"])
+    assert r.summary["denominator_zero"] is True
+
+
+def test_derive_ratio_missing_and_non_numeric_blocked(sales):
+    with pytest.raises(EngineError, match="不存在"):
+        run_step(sales, _ratio_step(numerator="幽灵", denominator="金额"))
+    with pytest.raises(EngineError, match="数值类型"):
+        run_step(sales, _ratio_step(numerator="区域", denominator="金额"))
+
+
+def test_derive_ratio_params_axes_validation():
+    with pytest.raises(ValidationError, match="granularity"):
+        DeriveRatioParams(numerator="Profit", denominator="Sales",
+                          date_column="日期")  # 缺 granularity
+    with pytest.raises(ValidationError, match="不能在同一"):
+        DeriveRatioParams(numerator="Profit", denominator="Sales",
+                          dimension="品类", date_column="日期",
+                          granularity=TimeGranularity.month)

@@ -409,3 +409,30 @@
   - `rule` TR-25.2: 同 (dim, metric) 零重复；同维度出现两次时指标必须不同；Sales+Profit 合成数据必须存在同维度对照；证据：planner 单测。
   - `rule` TR-25.3: 注入坏 View 时其余 View 成功（partial success），旧 ledger/result 槽位不被污染；证据：executor 单测。
   - `rule` TR-25.4: 用户验收 Gate——Superstore 实际 Bundle JSON + 每 View 真实计算结果经用户确认分析价值后，方可进入 Phase 2。
+
+## Task 26: 重构 Phase 2 — 确定性派生比率 + DashboardArtifact + 跨视图 Findings（后端，不动前端）
+
+- **Status**: `in_progress`（代码/测试/Superstore 实测完成；**用户验收 Gate 待确认，确认前不进入 Phase 3**）
+- **Priority**: high
+- **Depends On**: Task 25（AnalysisBundle 自动分析层）
+- **Description**:
+  - **第一优先级（用户明确要求）：确定性 DerivedMetric/ratio**——新增第 11 算子 `derive_ratio`（无轴单值/按 dimension/按 date+granularity），口径铁律 **Σnumerator/Σdenominator（先聚合后相除）**，分母 0/NaN 产出 null 不抛错；新增 `schemas/derived_metric.py`（DerivedMetricSpec）+ `services/derived_metrics.py`（规则注册表，第一版 profit_margin：利润/profit/净利/毛利 ÷ 销售|营收|revenue|sales|amount|收入；率/折扣命名字段不可自比；探测不到不产出）；**LLM 不参与比率定义与计算**。
+  - Planner 槽位策略：探测到比率时生成 profitability 候选（锚点 breakdown→comparison，op=derive_ratio），**profitability 替换主指标 ranking 槽位**；同维度允许「2 原始指标 View + 1 派生比率 View」（派生不占原始冗余额度）；叙事顺序 结构→对照→利润率；VIEW_CHART[profitability] 占位 metric 改 bar；无比率数据集维持 ranking（Phase 1 行为零变化）。
+  - 新增 `schemas/dashboard.py`（全部 extra=forbid）：ChartSpec（type/title/x_field/y_fields/dimension/metric/interactive）、KPI（value/change/change_type yoy·mom·wow·previous_period/unit）、DashboardSection 五段（overview/trend/structure/diagnosis/detail）、FilterDefinition、DrilldownFilter/DrillChild/DrilldownSuggestion、Finding（growth/decline/anomaly/risk/opportunity/structure/relationship + importance + evidence_view_ids + drilldown）、DashboardArtifact{bundle_id,title,kpis,sections,findings,risks,global_filters}。
+  - 存储隔离：`bundle/dashboard.json`；view 级 `chart_spec.json`；探针 `bundle/probes/{probe_id}/{plan.json,result.parquet,ledger.json}`，**probe 预算 ≤3、异常全收敛不阻断 artifact**。
+  - `dashboard_synthesizer.py`：KPI（Sales/Profit overview 值 + 利润率无轴 probe + trend 末两期 mom，不满足可比条件 change=null）；五段固定布局（只装成功 View，全部成功 View 可追溯）；ChartSpec 按 view.type+末端参数确定性生成并随 view 落盘（artifact 持 view_id 索引）；global_filters 取 ≤30 基数主维度+快照真实成员。
+  - `dashboard_insight.py` 四类纯规则检测器（中文模板强制四要素：现象/位置/量化/建议；FindingsDetector Protocol 为 LLM 增强预留，本阶段不实现）：① divergence 量利背离（利润份额−销售份额 ≤−10pp 或利润为负，evidence 双 view，负成员→high）；② risk.negative_member（负利润成员 + filter→group_by 下一层级维度 drilldown probe，层级语义优先「子/sub/商品」类，Top2 负贡献子成员，probe 失败 drilldown=None 但 finding 保留）；③ relationship（|r|≥0.3，负相关→risk 且率/折扣类指标作驱动因素，固定因果免责语）；④ trend（末两期 |变化|≥10% → growth/decline）。
+  - API：`POST/GET /sessions/{id}/dashboard`（bundle/execution 缺失 409、会话 404，门禁同 bundle）；main.py 注册；Phase 1 与旧十阶段接口行为不变；前端零改动。
+- **Completion Evidence**:
+  - 新增：`app/schemas/derived_metric.py`、`app/schemas/dashboard.py`、`app/services/derived_metrics.py`、`app/services/dashboard_synthesizer.py`、`app/services/dashboard_insight.py`、`app/routers/dashboard.py`、`scripts/run_dashboard_demo.py`、4 个测试文件。
+  - 修改：`schemas/plan.py`（DeriveRatioParams/Step + Union 第 11 个 + 轴互斥校验）、`engine/ops.py`（op_derive_ratio）、`engine/catalog.py`（OP_META/step_columns/validate）、`offline_fallback.py`（_step/_SHAPE_ZH）、`bundle_planner.py`（profitability 候选+槽位替换）、`schemas/bundle.py`（profitability→bar）、`storage.py`（dashboard/probe/chart_spec 槽位）、`main.py`。
+  - 全量 `uv run pytest -q`：**184 passed**（基线 163 + 新增 21：derive_ratio 6、derived_metrics 7、planner profitability 1、dashboard 管线 3、dashboard API 3、图表映射 1），零回归。
+  - Superstore 实测（快照 9,011 行）：KPI Sales=833,008.31（mom +0.2%）、Profit=101,848.47、利润率=**12.23%**；Category 利润率 Office Supplies 19.5%/Technology 15.5%/**Furniture −0.8%**；3 条 Findings——量利背离（Furniture 销售份额 30.4% vs 利润份额 −2.0%，缺口 32.4pp）、亏损风险（Furniture −2,054，drilldown→Sub-Category：**Tables −8,611、Bookcases −4,853**）、Discount×Profit 负相关（r=−0.4575，含因果免责语）；探针 2/3。
+- **Acceptance Criteria Addressed**: AC-4, AC-5, AC-8, AC-13, AC-U1
+- **Test Requirements**:
+  - `rule` TR-26.1: derive_ratio 口径铁律——构造组间规模悬殊数据，断言 Σnum/Σden ≠ 行级比率均值（符号可相反）；分母 0→null 不抛；维度 null 成员排末位；参数轴互斥校验；证据：test_engine_ops.py。
+  - `rule` TR-26.2: profit_margin 规则探测命中（Sales+Profit/中文命名/净利优先/销售额优先于金额），率命名字段不自比，无利润或无收入字段不命中；证据：test_derived_metrics.py。
+  - `rule` TR-26.3: profitability 替换 ranking 槽位（derive_ratio 参数正确、同维第 3 视角、无比率数据集 ranking 保留）；证据：test_bundle_planner.py。
+  - `rule` TR-26.4: 真实管线合成 DashboardArtifact——五段齐全且成功 View 全可追溯、margin KPI=ΣProfit/ΣSales、背离/负成员+drilldown（Tables 类子成员）/负相关+免责语、risks 子集、probe ≤3 隔离；证据：test_dashboard_pipeline.py。
+  - `rule` TR-26.5: API 门禁 409/404、POST 合成契约可解析、GET 恢复；证据：test_dashboard_api.py。
+  - `rule` TR-26.6: 用户验收 Gate——Superstore 实际 DashboardArtifact JSON + KPI/Sections/Findings 摘要经用户确认后，方可进入 Phase 3（前端）。

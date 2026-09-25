@@ -1,4 +1,4 @@
-"""分析方案契约：10 个有限算子的判别联合（附录 A）。
+"""分析方案契约：有限算子的判别联合（附录 A；Phase 2 新增 derive_ratio 共 11 个）。
 
 任何算子以外的步骤都无法通过本模型校验；执行器只执行这里定义过的算子。
 """
@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import (
     AggFunc,
@@ -161,6 +161,34 @@ class OutlierFlagStep(_StepBase):
     date_column: str | None = None  # 可选：按时间序列展示离群
 
 
+class DeriveRatioParams(BaseModel):
+    """确定性派生比率（如利润率 = ΣProfit / ΣSales）。
+
+    口径铁律：先分组聚合、后相除（ratio of sums）；行级比率求平均是错误口径，
+    引擎不提供该算法。dimension 与 date_column 二选一或都不填（整体单值）。
+    """
+
+    model_config = _STRICT
+    numerator: str = Field(min_length=1)
+    denominator: str = Field(min_length=1)
+    dimension: str | None = None
+    date_column: str | None = None
+    granularity: TimeGranularity | None = None
+
+    @model_validator(mode="after")
+    def _check_axes(self) -> "DeriveRatioParams":
+        if (self.date_column is None) != (self.granularity is None):
+            raise ValueError("date_column 与 granularity 必须同时提供或同时省略。")
+        if self.dimension and self.date_column:
+            raise ValueError("维度比率与时间趋势比率不能在同一步骤中计算。")
+        return self
+
+
+class DeriveRatioStep(_StepBase):
+    op: Literal["derive_ratio"]
+    params: DeriveRatioParams
+
+
 PlanStep = Annotated[
     Union[
         FilterStep,
@@ -173,6 +201,7 @@ PlanStep = Annotated[
         CompareGroupsStep,
         CorrelationStep,
         OutlierFlagStep,
+        DeriveRatioStep,
     ],
     Field(discriminator="op"),
 ]

@@ -209,6 +209,14 @@ class SessionStore:
             self.view_dir(session_id, view_id) / "result.parquet", index=False
         )
 
+    def write_view_chart_spec(self, session_id: str, view_id: str, payload: Any) -> Path:
+        path = self.view_dir(session_id, view_id) / "chart_spec.json"
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        return path
+
     def write_view_validation(self, session_id: str, view_id: str, payload: Any) -> Path:
         path = self.view_dir(session_id, view_id) / "validation.json"
         path.write_text(
@@ -216,6 +224,64 @@ class SessionStore:
             encoding="utf-8",
         )
         return path
+
+    # ---- DashboardArtifact（Phase 2，与 view 槽位隔离） ----
+    def write_dashboard(self, session_id: str, payload: Any) -> Path:
+        d = self.bundle_dir(session_id)
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / "dashboard.json"
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        return path
+
+    def read_dashboard(self, session_id: str) -> Any:
+        path = self.bundle_dir(session_id) / "dashboard.json"
+        if not path.exists():
+            raise StorageError("尚未生成仪表盘（DashboardArtifact）。")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def has_dashboard(self, session_id: str) -> bool:
+        return (self.bundle_dir(session_id) / "dashboard.json").exists()
+
+    # ---- 洞察探针（KPI 比率/下钻，产物隔离在 bundle/probes/） ----
+    def probe_dir(self, session_id: str, probe_id: str) -> Path:
+        safe = Path(probe_id).name
+        if safe != probe_id or not safe:
+            raise StorageError(f"非法的探针标识：{probe_id}")
+        d = self.bundle_dir(session_id) / "probes" / safe
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def write_probe_plan(self, session_id: str, probe_id: str, payload: Any) -> Path:
+        path = self.probe_dir(session_id, probe_id) / "plan.json"
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        return path
+
+    def save_probe_result(
+        self, session_id: str, probe_id: str, df: pd.DataFrame
+    ) -> None:
+        normalize_mixed_columns(df).to_parquet(
+            self.probe_dir(session_id, probe_id) / "result.parquet", index=False
+        )
+
+    def write_probe_ledger(self, session_id: str, probe_id: str, payload: Any) -> Path:
+        path = self.probe_dir(session_id, probe_id) / "ledger.json"
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        return path
+
+    def load_probe_result(self, session_id: str, probe_id: str) -> pd.DataFrame:
+        path = self.probe_dir(session_id, probe_id) / "result.parquet"
+        if not path.exists():
+            raise StorageError(f"探针结果不存在：{probe_id}")
+        return pd.read_parquet(path)
 
     def load_original(self, session_id: str) -> pd.DataFrame:
         """重新解析原始上传文件，返回 DataFrame。"""

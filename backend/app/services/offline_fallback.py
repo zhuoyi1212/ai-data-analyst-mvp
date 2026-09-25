@@ -33,6 +33,8 @@ from app.schemas.plan import (
     AnalysisPlan,
     CorrelationParams,
     CorrelationStep,
+    DeriveRatioParams,
+    DeriveRatioStep,
     GroupByParams,
     GroupByStep,
     OutlierFlagParams,
@@ -325,6 +327,24 @@ def _step(op: str, hint: dict[str, Any], fields: list[str]):
         )
         return OutlierFlagStep(step_id="outlier_flag", op="outlier_flag", params=p,
                                description=f"用 {p.method.value} 规则标记「{p.column}」离群值")
+    if op == "derive_ratio":
+        p = DeriveRatioParams(
+            numerator=hint["numerator"],
+            denominator=hint["denominator"],
+            dimension=hint.get("dimension"),
+            date_column=hint.get("date_column"),
+            granularity=TimeGranularity(hint["granularity"]) if hint.get("granularity") else None,
+        )
+        if p.dimension:
+            axis = f"（按「{p.dimension}」）"
+        elif p.date_column:
+            axis = f"（按{p.granularity.value if p.granularity else ''}趋势）"
+        else:
+            axis = "（整体）"
+        return DeriveRatioStep(
+            step_id="derive_ratio", op="derive_ratio", params=p,
+            description=f"确定性派生比率「{p.numerator}」÷「{p.denominator}」{axis}",
+        )
     raise ValueError(f"离线降级不支持算子: {op}")
 
 
@@ -332,7 +352,7 @@ _SHAPE_ZH = {
     "aggregate": "单行单列指标卡", "group_by": "按维度分组的多行结果",
     "share": "各成员值与占比", "top_n": "排名前 N 的成员",
     "time_series": "按时间周期排列的序列", "correlation": "相关系数单值",
-    "outlier_flag": "带离群标记的结果",
+    "outlier_flag": "带离群标记的结果", "derive_ratio": "派生比率（单值/按维度/按时间）",
 }
 
 

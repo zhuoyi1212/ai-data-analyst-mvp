@@ -379,3 +379,33 @@
 - **Acceptance Criteria Addressed**: AC-13
 - **Test Requirements**:
   - `rule` TR-24.1: live 冒烟闭环完成，关键数值由引擎产出、洞察通过全部校验；若环境无 key 则记录为「用户待执行」，不阻塞交付；证据：冒烟记录或阻塞说明。
+
+## Task 25: 重构 Phase 1 — AnalysisBundle 自动分析层（后端，规则版；不动前端）
+
+- **Status**: `completed`（代码与测试完成；Superstore 实测 8/8 成功；**用户价值验收 Gate 待确认，确认前不进入 Phase 2**）
+- **Priority**: high
+- **Depends On**: Task 17（既有 10 算子引擎与质量快照）
+- **Description**:
+  - 从「单问题→单方案→单结果」升级为「Dataset → AnalysisBundle（4–8 个 AnalysisView）→ 批量执行 partial success」。
+  - BundlePlanner 三阶段可替换架构：`CandidateGenerator`（穷举候选，允许冗余，frozen Candidate + family_key）→ `BundleSelector` Protocol（Phase 1 为 `RuleBundleSelector`，Phase 2 可无痛替换/增强为 LLM）→ `AnalysisBundle`。
+  - 多样性规则：metric / dimension / analysis type 多样性 + 信息冗余铁律（同 dimension+metric 不得仅换 share/group_by/top_n 重复）；存在两个高价值指标（如 Sales+Profit）时强制产出「同维度跨指标对照」View（锚点优先 breakdown 维度、comparison 口径），余量填充顺序：对照 → relationship → anomaly → 第二指标趋势 → 第二指标新维度分布 → 第三指标总览，上限 8。
+  - relationship 候选：字典 relations 优先；缺失时在快照上确定性计算指标对 pearson 相关（纯 pandas，含率/折扣类指标优先，|r|≥0.15 才采用）。
+  - 执行内核抽取：`executor.execute_plan(snapshot, plan)` 纯函数，旧 `execute()` 闸门逻辑不变；`bundle_executor.execute_bundle` 逐 View 复用内核，单 View 任何异常收敛为 failed + 中文 reason，不拖垮其他 View。
+  - View 级存储隔离：`storage/sessions/{sid}/bundle/bundle.json`、`execution.json`、`views/{view_id}/{result.parquet,ledger.json,validation.json}`；不触碰旧 artifact 槽位。
+  - View 级校验：coverage / shape / null_handling；anomaly 预览为离群行优先（全量 parquet 不变）；相关系数/离群统计由算子 summary 透出。
+  - API：`POST/GET /sessions/{id}/analysis-bundle`、`POST/GET .../analysis-bundle/execute`（阶段缺失 409、会话缺失 404）。
+  - ChartSpec 延后 Phase 2，本阶段 chart 复用 ChartType 枚举；`ViewType.profitability` 已在契约占位。
+- **Completion Evidence**:
+  - 新增：`app/schemas/bundle.py`、`app/services/bundle_planner.py`、`app/services/bundle_executor.py`、`app/routers/bundle.py`、`scripts/run_bundle_demo.py`、3 个测试文件（32 例）。
+  - 修改：`app/services/executor.py`（execute_plan 内核 + clean_rows 公开）、`app/services/storage.py`（bundle 隔离槽位）、`app/main.py`（路由注册）。
+  - 全量 `uv run pytest -q`：**163 passed**（131 旧 + 32 新），零回归。
+  - Superstore（tableau超市数据集.xls，10,194 行 ×21 列 → 质量快照 9,011 行）实测 8/8：Sales/Profit 双总览、Sales 月趋势、Segment×Sales、Category×Sales 占比、Customer Top5、Category×Profit 跨指标对照、Discount×Profit 相关（r≈-0.46）。
+- **⚠️ Phase 2 第一优先级（用户明确要求，不可降级/遗忘）**:
+  - **确定性 DerivedMetric / ratio 能力**：如 `Profit Margin = Profit / Sales`，由规则/引擎在数据快照上确定性计算，**禁止 LLM 直接计算比率**；产出 `profitability` ViewType（契约已占位），并让比率参与跨 View 洞察。
+  - 随后才是 dashboard_synthesizer、跨 View Findings、完整 ChartSpec；前端改动属 Phase 3。
+- **Acceptance Criteria Addressed**: AC-4, AC-5, AC-8, AC-13, AC-U1（为 Phase 2 跨视图洞察与 Dashboard 打底）
+- **Test Requirements**:
+  - `rule` TR-25.1: 5 份示例数据均产出 4–8 View、算子全在白名单、引用字段均存在、有日期必有 trend；证据：参数化测试通过。
+  - `rule` TR-25.2: 同 (dim, metric) 零重复；同维度出现两次时指标必须不同；Sales+Profit 合成数据必须存在同维度对照；证据：planner 单测。
+  - `rule` TR-25.3: 注入坏 View 时其余 View 成功（partial success），旧 ledger/result 槽位不被污染；证据：executor 单测。
+  - `rule` TR-25.4: 用户验收 Gate——Superstore 实际 Bundle JSON + 每 View 真实计算结果经用户确认分析价值后，方可进入 Phase 2。

@@ -32,7 +32,39 @@ def _hash_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _clean_rows(df: pd.DataFrame, limit: int) -> list[dict[str, Any]]:
+def execute_plan(
+    snapshot: pd.DataFrame, plan: AnalysisPlan
+) -> tuple[pd.DataFrame, list[StepRecord], float]:
+    """确定性计算内核（纯函数，可被单 Plan 与 Bundle 多 View 共同复用）。
+
+    输入：质量处理后快照 + 任意合法 AnalysisPlan。
+    输出：末端结果 DataFrame、逐步台账记录、耗时毫秒。
+    不读写会话存储、不校验闸门、不关心方案是否锁定——这些由调用方负责。
+    数值唯一来源仍是 engine.ops.run_step；引擎错误（EngineError）原样上抛。
+    """
+    started = time.perf_counter()
+    current = snapshot
+    records: list[StepRecord] = []
+    for step in plan.steps:
+        input_rows = len(current)
+        result = run_step(current, step)
+        records.append(StepRecord(
+            step_id=step.step_id,
+            op=step.op,
+            description=step.description,
+            params=step.params.model_dump(mode="json"),
+            input_rows=input_rows,
+            output_rows=len(result.df),
+            output_columns=[str(c) for c in result.df.columns],
+            formula=result.formula,
+            summary=result.summary,
+        ))
+        current = result.df
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+    return current, records, elapsed_ms
+
+
+def clean_rows(df: pd.DataFrame, limit: int) -> list[dict[str, Any]]:
     preview = df.head(limit)
     rows: list[dict[str, Any]] = []
     records = preview.to_dict(orient="records")
@@ -71,29 +103,11 @@ def execute(session_id: str, store: SessionStore) -> Ledger:
     if quality.get("snapshot_hash") != snapshot_hash:
         raise ExecutionGateError("数据快照与质量处理记录不一致，请重新完成数据质量处理。")
 
-    # 3) 逐步执行（数值唯一来源：引擎算子）
-    started = time.perf_counter()
-    current = snapshot
-    records: list[StepRecord] = []
+    # 3) 逐步执行（复用纯计算内核；数值唯一来源：引擎算子）
     try:
-        for step in artifact.plan.steps:
-            input_rows = len(current)
-            result = run_step(current, step)
-            records.append(StepRecord(
-                step_id=step.step_id,
-                op=step.op,
-                description=step.description,
-                params=step.params.model_dump(mode="json"),
-                input_rows=input_rows,
-                output_rows=len(result.df),
-                output_columns=[str(c) for c in result.df.columns],
-                formula=result.formula,
-                summary=result.summary,
-            ))
-            current = result.df
+        current, records, elapsed_ms = execute_plan(snapshot, artifact.plan)
     except EngineError:
         raise  # 中文错误直接阻断；不写台账、不写结果
-    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
 
     # 4) 全量结果落 parquet；台账仅带预览行
     result_path = store.session_dir(session_id) / "result.parquet"
@@ -111,7 +125,7 @@ def execute(session_id: str, store: SessionStore) -> Ledger:
         steps=records,
         result_columns=[str(c) for c in current.columns],
         result_rows_total=len(current),
-        result_preview=_clean_rows(current, settings.table_display_rows),
+        result_preview=clean_rows(current, settings.table_display_rows),
         elapsed_ms=elapsed_ms,
         executed_at=datetime.now(timezone.utc).isoformat(),
     )

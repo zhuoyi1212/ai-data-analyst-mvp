@@ -1,0 +1,46 @@
+{
+  "response": {
+    "insights": [
+      {
+        "text": "「日均活跃用户数」的平均值为 4968.6，基于质量处理后的全部数据计算。",
+        "type": "key_finding",
+        "evidence_refs": [
+          "agg"
+        ],
+        "numbers": [
+          {
+            "value": 4968.6,
+            "label": "日均活跃用户数平均值",
+            "ref_step": "agg",
+            "ref_kind": "metric",
+            "ref_keys": {}
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "全量描述性聚合，五项校验全部通过，无风险因素",
+        "needs_further_validation": false,
+        "disclaimer": null
+      },
+      {
+        "text": "本次聚合结果 4968.6 由计算引擎对字段「dau」执行平均值得出，证据链完整可追溯。",
+        "type": "key_finding",
+        "evidence_refs": [
+          "agg"
+        ],
+        "numbers": [
+          {
+            "value": 4968.6,
+            "label": "日均活跃用户数平均值",
+            "ref_step": "agg",
+            "ref_kind": "metric",
+            "ref_keys": {}
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "全量描述性聚合，五项校验全部通过，无风险因素",
+        "needs_further_validation": false,
+        "disclaimer": null
+      }
+    ]
+  }
+}

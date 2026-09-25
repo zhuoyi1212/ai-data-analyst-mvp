@@ -1,0 +1,23 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "销售额按月趋势如何？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "time_series",
+        "description": "按 month 对「金额」sum",
+        "depends_on": [],
+        "op": "time_series",
+        "params": {
+          "date_column": "日期",
+          "granularity": "month",
+          "metric": "金额",
+          "func": "sum"
+        }
+      }
+    ],
+    "expected_shape": "时间序列聚合结果",
+    "chart_hint": "line"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "response": {
+    "insights": [
+      {
+        "text": "在「category」维度下，家居百货 的数值最高，为 175.03。",
+        "type": "comparison",
+        "evidence_refs": [
+          "group_by"
+        ],
+        "numbers": [
+          {
+            "value": 175.03,
+            "label": "家居百货",
+            "ref_step": "group_by",
+            "ref_kind": "row",
+            "ref_keys": {
+              "category": "家居百货"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "分组聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      },
+      {
+        "text": "排序最末的成员是 食品饮料，对应数值为 164.09。",
+        "type": "comparison",
+        "evidence_refs": [
+          "group_by"
+        ],
+        "numbers": [
+          {
+            "value": 164.09,
+            "label": "食品饮料",
+            "ref_step": "group_by",
+            "ref_kind": "row",
+            "ref_keys": {
+              "category": "食品饮料"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "分组聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "response": {
+    "questions": [
+      {
+        "text": "会话数随时间的趋势如何？",
+        "rationale": "「date」为日期字段，可对「sessions」按时间下钻",
+        "fields": [
+          "date",
+          "sessions"
+        ],
+        "target_op": "time_series",
+        "plan_hint": {
+          "granularity": "week"
+        }
+      },
+      {
+        "text": "哪些天的会话数属于离群峰值？",
+        "rationale": "「sessions」已有异常峰值，可继续做离群标记",
+        "fields": [
+          "sessions"
+        ],
+        "target_op": "outlier_flag",
+        "plan_hint": {
+          "column": "sessions",
+          "method": "iqr",
+          "threshold": 1.5
+        }
+      },
+      {
+        "text": "新增用户与日活的相关性如何？",
+        "rationale": "「new_users」与「dau」通常相关，可量化验证",
+        "fields": [
+          "new_users",
+          "dau"
+        ],
+        "target_op": "correlation",
+        "plan_hint": {}
+      }
+    ]
+  }
+}

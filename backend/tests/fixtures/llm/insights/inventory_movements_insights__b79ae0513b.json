@@ -1,0 +1,50 @@
+{
+  "response": {
+    "insights": [
+      {
+        "text": "2024-05-27 出现周期峰值，数值为 13324.0。",
+        "type": "trend",
+        "evidence_refs": [
+          "time_series"
+        ],
+        "numbers": [
+          {
+            "value": 13324.0,
+            "label": "2024-05-27",
+            "ref_step": "time_series",
+            "ref_kind": "row",
+            "ref_keys": {
+              "date": "2024-05-27"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "时间序列聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      },
+      {
+        "text": "2024-04-29 为周期谷值，数值为 8474.0。",
+        "type": "trend",
+        "evidence_refs": [
+          "time_series"
+        ],
+        "numbers": [
+          {
+            "value": 8474.0,
+            "label": "2024-04-29",
+            "ref_step": "time_series",
+            "ref_kind": "row",
+            "ref_keys": {
+              "date": "2024-04-29"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "时间序列聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      }
+    ]
+  }
+}

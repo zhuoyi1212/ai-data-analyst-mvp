@@ -1,0 +1,46 @@
+{
+  "response": {
+    "insights": [
+      {
+        "text": "「投放总花费」的求和为 3562372.14，基于质量处理后的全部数据计算。",
+        "type": "key_finding",
+        "evidence_refs": [
+          "agg"
+        ],
+        "numbers": [
+          {
+            "value": 3562372.14,
+            "label": "投放总花费求和",
+            "ref_step": "agg",
+            "ref_kind": "metric",
+            "ref_keys": {}
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "全量描述性聚合，五项校验全部通过，无风险因素",
+        "needs_further_validation": false,
+        "disclaimer": null
+      },
+      {
+        "text": "本次聚合结果 3562372.14 由计算引擎对字段「spend」执行求和得出，证据链完整可追溯。",
+        "type": "key_finding",
+        "evidence_refs": [
+          "agg"
+        ],
+        "numbers": [
+          {
+            "value": 3562372.14,
+            "label": "投放总花费求和",
+            "ref_step": "agg",
+            "ref_kind": "metric",
+            "ref_keys": {}
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "全量描述性聚合，五项校验全部通过，无风险因素",
+        "needs_further_validation": false,
+        "disclaimer": null
+      }
+    ]
+  }
+}

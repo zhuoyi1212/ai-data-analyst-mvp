@@ -1,0 +1,213 @@
+{
+  "datasets": {
+    "customer_tickets": {
+      "decisions": {
+        "format:date_text:created_at": {
+          "action": "convert"
+        },
+        "format:enum_case:channel": {
+          "action": "convert"
+        },
+        "missing:handle_hours": {
+          "action": "fill_mean"
+        },
+        "outlier:handle_hours": {
+          "action": "mark"
+        }
+      },
+      "filename": "customer_tickets.csv",
+      "golden_values": {
+        "handle_hours_mean": 20.0932,
+        "resolved_count_distinct_rows": 2600,
+        "satisfaction_mean": 2.9831
+      },
+      "issue_counts": {
+        "format": 2,
+        "missing": 1,
+        "outlier": 1
+      },
+      "issue_ids": [
+        "format:date_text:created_at",
+        "format:enum_case:channel",
+        "missing:handle_hours",
+        "outlier:handle_hours"
+      ],
+      "raw_rows": 2600,
+      "snapshot_hash": "8ffc952286b0e6fc569b7b6ce7f14dfe7ba6e9d054d67022404e48ed2f90a95a",
+      "snapshot_rows": 2600
+    },
+    "inventory_movements": {
+      "decisions": {
+        "duplicate:rows": {
+          "action": "drop_duplicates"
+        },
+        "format:currency:unit_cost": {
+          "action": "convert"
+        },
+        "format:date_text:date": {
+          "action": "convert"
+        },
+        "missing:stock_in": {
+          "action": "fill_mean"
+        },
+        "outlier:ending_stock": {
+          "action": "exclude"
+        }
+      },
+      "filename": "inventory_movements.csv",
+      "golden_values": {
+        "ending_stock_mean": 167.3617,
+        "stock_in_mean": 59.9065,
+        "stock_out_sum": 105935.0
+      },
+      "issue_counts": {
+        "duplicate": 1,
+        "format": 2,
+        "missing": 1,
+        "outlier": 1
+      },
+      "issue_ids": [
+        "format:date_text:date",
+        "missing:stock_in",
+        "outlier:ending_stock",
+        "format:currency:unit_cost",
+        "duplicate:rows"
+      ],
+      "raw_rows": 2163,
+      "snapshot_hash": "d400412c75a7ea70c1ed71c8f651e1275f4553d071e585034d89d4d23cd17bb4",
+      "snapshot_rows": 2148
+    },
+    "marketing_campaigns": {
+      "decisions": {
+        "duplicate:rows": {
+          "action": "drop_duplicates"
+        },
+        "format:currency:spend": {
+          "action": "convert"
+        },
+        "format:date_text:date": {
+          "action": "convert"
+        },
+        "format:enum_case:channel": {
+          "action": "convert"
+        },
+        "outlier:clicks": {
+          "action": "keep"
+        },
+        "outlier:conversions": {
+          "action": "keep"
+        },
+        "outlier:revenue": {
+          "action": "keep"
+        },
+        "outlier:spend": {
+          "action": "exclude"
+        }
+      },
+      "filename": "marketing_campaigns.csv",
+      "golden_values": {
+        "conversions_sum": 288126.0,
+        "spend_sum": 3562372.14,
+        "top_channel": "wechat",
+        "top_channel_spend": 907228.51
+      },
+      "issue_counts": {
+        "duplicate": 1,
+        "format": 3,
+        "outlier": 4
+      },
+      "issue_ids": [
+        "format:date_text:date",
+        "format:enum_case:channel",
+        "format:currency:spend",
+        "outlier:spend",
+        "outlier:clicks",
+        "outlier:conversions",
+        "outlier:revenue",
+        "duplicate:rows"
+      ],
+      "raw_rows": 2164,
+      "snapshot_hash": "789efc29f85bc442c95828791d05889102e113a0169d1a39d7474edc50bec9e8",
+      "snapshot_rows": 2152
+    },
+    "operations_daily": {
+      "decisions": {
+        "format:date_text:date": {
+          "action": "convert"
+        },
+        "format:sentinel:dau": {
+          "action": "convert"
+        },
+        "missing:dau": {
+          "action": "fill_mean"
+        },
+        "missing:new_users": {
+          "action": "fill_mean"
+        },
+        "outlier:sessions": {
+          "action": "mark"
+        }
+      },
+      "filename": "operations_daily.csv",
+      "golden_values": {
+        "dau_mean": 4968.6012,
+        "sessions_max": 39000.0,
+        "tickets_sum": 12163.0
+      },
+      "issue_counts": {
+        "format": 2,
+        "missing": 2,
+        "outlier": 1
+      },
+      "issue_ids": [
+        "format:date_text:date",
+        "missing:dau",
+        "format:sentinel:dau",
+        "missing:new_users",
+        "outlier:sessions"
+      ],
+      "raw_rows": 174,
+      "snapshot_hash": "cd20404cf63b58ed7e5d81055cc7ac487eed4e23e53bc065f59c05529945e1f7",
+      "snapshot_rows": 174
+    },
+    "sales_orders": {
+      "decisions": {
+        "duplicate:rows": {
+          "action": "drop_duplicates"
+        },
+        "format:date_text:日期": {
+          "action": "convert"
+        },
+        "missing:区域": {
+          "action": "drop_rows"
+        },
+        "outlier:金额": {
+          "action": "exclude"
+        }
+      },
+      "filename": "sales_orders.csv",
+      "golden_values": {
+        "amount_sum": 553725.0,
+        "month_count": 12,
+        "qty_sum": 7315.0,
+        "top_region": "西南",
+        "top_region_amount": 117915.0
+      },
+      "issue_counts": {
+        "duplicate": 1,
+        "format": 1,
+        "missing": 1,
+        "outlier": 1
+      },
+      "issue_ids": [
+        "format:date_text:日期",
+        "missing:区域",
+        "outlier:金额",
+        "duplicate:rows"
+      ],
+      "raw_rows": 3004,
+      "snapshot_hash": "187c225f33ceab9dddf52515ef38d0c32f8ad9f6ef5a9b4c57945ec3d0d4bd2a",
+      "snapshot_rows": 2952
+    }
+  }
+}

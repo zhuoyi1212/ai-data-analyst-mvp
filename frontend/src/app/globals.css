@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --fg: #18181b;
+  --muted: #71717a;
+  --line: #e4e4e7;
+  --bg: #fafafa;
+}
+
+body {
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}

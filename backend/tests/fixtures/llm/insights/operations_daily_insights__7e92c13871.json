@@ -1,0 +1,68 @@
+{
+  "response": {
+    "insights": [
+      {
+        "text": "在 IQR 围栏区间 [6870.75, 16136.75] 之外，共识别 4 个离群点。",
+        "type": "anomaly",
+        "evidence_refs": [
+          "outlier_flag"
+        ],
+        "numbers": [
+          {
+            "value": 6870.75,
+            "label": "下界",
+            "ref_step": "outlier_flag",
+            "ref_kind": "summary",
+            "ref_keys": {
+              "field": "lower_bound"
+            }
+          },
+          {
+            "value": 16136.75,
+            "label": "上界",
+            "ref_step": "outlier_flag",
+            "ref_kind": "summary",
+            "ref_keys": {
+              "field": "upper_bound"
+            }
+          },
+          {
+            "value": 4.0,
+            "label": "离群点数",
+            "ref_step": "outlier_flag",
+            "ref_kind": "summary",
+            "ref_keys": {
+              "field": "outlier_count"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "离群检测结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      },
+      {
+        "text": "离群点占比为 2.3%，需结合业务判断是否为真实异常。",
+        "type": "anomaly",
+        "evidence_refs": [
+          "outlier_flag"
+        ],
+        "numbers": [
+          {
+            "value": 2.3,
+            "label": "离群占比",
+            "ref_step": "outlier_flag",
+            "ref_kind": "summary",
+            "ref_keys": {
+              "field": "outlier_rate_pct"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "离群检测结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      }
+    ]
+  }
+}

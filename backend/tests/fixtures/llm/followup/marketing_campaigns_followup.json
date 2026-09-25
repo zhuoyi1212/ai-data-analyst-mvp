@@ -1,0 +1,42 @@
+{
+  "response": {
+    "questions": [
+      {
+        "text": "各渠道花费对比如何？",
+        "rationale": "「channel」是枚举维度，可对「spend」分组下钻",
+        "fields": [
+          "channel",
+          "spend"
+        ],
+        "target_op": "group_by",
+        "plan_hint": {
+          "dimension": "channel",
+          "metric": "spend",
+          "func": "sum"
+        }
+      },
+      {
+        "text": "收入随时间的趋势如何？",
+        "rationale": "「date」为日期字段，可对「revenue」按月汇总",
+        "fields": [
+          "date",
+          "revenue"
+        ],
+        "target_op": "time_series",
+        "plan_hint": {
+          "granularity": "month"
+        }
+      },
+      {
+        "text": "花费与转化量的相关性如何？",
+        "rationale": "「spend」与「conversions」的投入产出关系值得量化",
+        "fields": [
+          "spend",
+          "conversions"
+        ],
+        "target_op": "correlation",
+        "plan_hint": {}
+      }
+    ]
+  }
+}

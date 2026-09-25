@@ -1,0 +1,80 @@
+{
+  "response": {
+    "questions": [
+      {
+        "text": "运营周期内的日均活跃用户数是多少？",
+        "category": "overview",
+        "rationale": "「dau」是运营核心指标，适合先看总体均值",
+        "fields": [
+          "dau"
+        ],
+        "target_op": "aggregate",
+        "confidence": "high"
+      },
+      {
+        "text": "日活跃用户数随时间如何变化？",
+        "category": "trend",
+        "rationale": "「date」为日期字段，可对「dau」观察时间趋势",
+        "fields": [
+          "date",
+          "dau"
+        ],
+        "target_op": "time_series",
+        "confidence": "high"
+      },
+      {
+        "text": "会话数是否存在异常峰值？",
+        "category": "anomaly",
+        "rationale": "「sessions」存在明显高于常规水平的峰值，需要离群检测",
+        "fields": [
+          "sessions"
+        ],
+        "target_op": "outlier_flag",
+        "confidence": "high"
+      },
+      {
+        "text": "日活跃用户数与会话数的相关性如何？",
+        "category": "correlation",
+        "rationale": "「dau」与「sessions」通常同向变动，可量化相关关系",
+        "fields": [
+          "dau",
+          "sessions"
+        ],
+        "target_op": "correlation",
+        "confidence": "high"
+      },
+      {
+        "text": "周期内工单总量是多少？",
+        "category": "overview",
+        "rationale": "「tickets」为每日工单数，可汇总得到总量",
+        "fields": [
+          "tickets"
+        ],
+        "target_op": "aggregate",
+        "confidence": "high"
+      },
+      {
+        "text": "新增用户数随时间如何变化？",
+        "category": "trend",
+        "rationale": "「date」为日期字段，可对「new_users」观察趋势",
+        "fields": [
+          "date",
+          "new_users"
+        ],
+        "target_op": "time_series",
+        "confidence": "high"
+      },
+      {
+        "text": "平均会话时长与满意度的相关性如何？",
+        "category": "correlation",
+        "rationale": "「avg_duration_sec」与「satisfaction」可能存在相关关系",
+        "fields": [
+          "avg_duration_sec",
+          "satisfaction"
+        ],
+        "target_op": "correlation",
+        "confidence": "high"
+      }
+    ]
+  }
+}

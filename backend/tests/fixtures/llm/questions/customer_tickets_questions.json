@@ -1,0 +1,81 @@
+{
+  "response": {
+    "questions": [
+      {
+        "text": "全部工单的平均处理时长是多少？",
+        "category": "overview",
+        "rationale": "「handle_hours」是服务效率核心指标，适合先看平均水平",
+        "fields": [
+          "handle_hours"
+        ],
+        "target_op": "aggregate",
+        "confidence": "high"
+      },
+      {
+        "text": "工单处理时长随时间如何变化？",
+        "category": "trend",
+        "rationale": "「created_at」为时间字段，可对「handle_hours」观察趋势",
+        "fields": [
+          "created_at",
+          "handle_hours"
+        ],
+        "target_op": "time_series",
+        "confidence": "high"
+      },
+      {
+        "text": "不同渠道的处理时长如何对比？",
+        "category": "comparison",
+        "rationale": "「channel」是枚举维度，可对「handle_hours」分组对比",
+        "fields": [
+          "channel",
+          "handle_hours"
+        ],
+        "target_op": "group_by",
+        "confidence": "high"
+      },
+      {
+        "text": "各渠道工单量的占比如何？",
+        "category": "share",
+        "rationale": "「channel」是枚举维度，可按工单来源拆解占比（结合「ticket_id」）",
+        "fields": [
+          "channel",
+          "ticket_id"
+        ],
+        "target_op": "share",
+        "confidence": "high"
+      },
+      {
+        "text": "处理时长最长的问题类型是哪些？",
+        "category": "ranking",
+        "rationale": "「issue_type」是分类维度，可按「handle_hours」排名",
+        "fields": [
+          "issue_type",
+          "handle_hours"
+        ],
+        "target_op": "top_n",
+        "confidence": "high"
+      },
+      {
+        "text": "处理时长是否存在异常超长工单？",
+        "category": "anomaly",
+        "rationale": "「handle_hours」可能存在异常滞留工单，需要离群检测",
+        "fields": [
+          "handle_hours"
+        ],
+        "target_op": "outlier_flag",
+        "confidence": "high"
+      },
+      {
+        "text": "处理时长与满意度的相关性如何？",
+        "category": "correlation",
+        "rationale": "「handle_hours」与「satisfaction」可能负向相关，可量化验证",
+        "fields": [
+          "handle_hours",
+          "satisfaction"
+        ],
+        "target_op": "correlation",
+        "confidence": "high"
+      }
+    ]
+  }
+}

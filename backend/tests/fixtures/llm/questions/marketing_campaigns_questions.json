@@ -1,0 +1,81 @@
+{
+  "response": {
+    "questions": [
+      {
+        "text": "全部有效投放的总花费是多少？",
+        "category": "overview",
+        "rationale": "「spend」是营销核心投入指标，适合先看总规模",
+        "fields": [
+          "spend"
+        ],
+        "target_op": "aggregate",
+        "confidence": "high"
+      },
+      {
+        "text": "每日广告花费如何变化？",
+        "category": "trend",
+        "rationale": "「date」覆盖整个投放周期，可对「spend」看时间趋势",
+        "fields": [
+          "date",
+          "spend"
+        ],
+        "target_op": "time_series",
+        "confidence": "high"
+      },
+      {
+        "text": "各渠道的广告花费如何对比？",
+        "category": "comparison",
+        "rationale": "「channel」是枚举维度，可对「spend」分组对比",
+        "fields": [
+          "channel",
+          "spend"
+        ],
+        "target_op": "group_by",
+        "confidence": "high"
+      },
+      {
+        "text": "各渠道转化量的占比如何？",
+        "category": "share",
+        "rationale": "「channel」是枚举维度，可拆解「conversions」的占比",
+        "fields": [
+          "channel",
+          "conversions"
+        ],
+        "target_op": "share",
+        "confidence": "high"
+      },
+      {
+        "text": "收入最高的营销活动是哪些？",
+        "category": "ranking",
+        "rationale": "「campaign」是活动维度，可按「revenue」排名",
+        "fields": [
+          "campaign",
+          "revenue"
+        ],
+        "target_op": "top_n",
+        "confidence": "high"
+      },
+      {
+        "text": "收入字段是否存在异常高值？",
+        "category": "anomaly",
+        "rationale": "「revenue」可能受异常投放影响出现极端值",
+        "fields": [
+          "revenue"
+        ],
+        "target_op": "outlier_flag",
+        "confidence": "high"
+      },
+      {
+        "text": "点击量与转化量的相关性如何？",
+        "category": "correlation",
+        "rationale": "「clicks」与「conversions」构成漏斗联动，可验证相关关系",
+        "fields": [
+          "clicks",
+          "conversions"
+        ],
+        "target_op": "correlation",
+        "confidence": "high"
+      }
+    ]
+  }
+}

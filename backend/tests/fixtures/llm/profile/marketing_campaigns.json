@@ -1,0 +1,74 @@
+{
+  "response": {
+    "fields": [
+      {
+        "name": "date",
+        "semantic_type": "date",
+        "meaning": "投放日期",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "channel",
+        "semantic_type": "dimension",
+        "meaning": "投放渠道",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "campaign",
+        "semantic_type": "dimension",
+        "meaning": "营销活动名称",
+        "unit": null,
+        "candidates": [
+          "营销活动名称",
+          "活动主题",
+          "投放计划名称"
+        ],
+        "confidence": "medium"
+      },
+      {
+        "name": "spend",
+        "semantic_type": "metric",
+        "meaning": "广告花费",
+        "unit": "元",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "impressions",
+        "semantic_type": "metric",
+        "meaning": "曝光量",
+        "unit": "次",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "clicks",
+        "semantic_type": "metric",
+        "meaning": "点击量",
+        "unit": "次",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "conversions",
+        "semantic_type": "metric",
+        "meaning": "转化量",
+        "unit": "次",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "revenue",
+        "semantic_type": "metric",
+        "meaning": "带来收入",
+        "unit": "元",
+        "candidates": [],
+        "confidence": "high"
+      }
+    ]
+  }
+}

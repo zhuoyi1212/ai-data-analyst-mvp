@@ -1,0 +1,24 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "不同优先级的处理时长如何对比？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "group_by",
+        "description": "按「priority」对「handle_hours」mean",
+        "depends_on": [],
+        "op": "group_by",
+        "params": {
+          "dimension": "priority",
+          "metric": "handle_hours",
+          "func": "mean",
+          "order": "desc",
+          "limit": null
+        }
+      }
+    ],
+    "expected_shape": "分组聚合结果",
+    "chart_hint": "bar"
+  }
+}

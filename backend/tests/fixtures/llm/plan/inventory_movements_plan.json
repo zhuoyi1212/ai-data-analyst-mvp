@@ -1,0 +1,21 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "全部库存记录的平均期末库存是多少？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "agg",
+        "description": "对字段「ending_stock」执行平均值",
+        "depends_on": [],
+        "op": "aggregate",
+        "params": {
+          "column": "ending_stock",
+          "func": "mean"
+        }
+      }
+    ],
+    "expected_shape": "单行单列指标卡",
+    "chart_hint": "metric"
+  }
+}

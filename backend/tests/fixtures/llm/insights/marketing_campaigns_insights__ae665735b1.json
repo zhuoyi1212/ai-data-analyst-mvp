@@ -1,0 +1,68 @@
+{
+  "response": {
+    "insights": [
+      {
+        "text": "两字段的相关系数为 -0.038（样本对数 2152），呈弱相关负相关（相关关系，不代表因果）。",
+        "type": "risk",
+        "evidence_refs": [
+          "correlation"
+        ],
+        "numbers": [
+          {
+            "value": -0.038,
+            "label": "相关系数",
+            "ref_step": "correlation",
+            "ref_kind": "summary",
+            "ref_keys": {
+              "field": "coefficient"
+            }
+          },
+          {
+            "value": 2152.0,
+            "label": "样本对数",
+            "ref_step": "correlation",
+            "ref_kind": "summary",
+            "ref_keys": {
+              "field": "n"
+            }
+          }
+        ],
+        "confidence": "medium",
+        "confidence_reason": "相关分析仅反映相关关系。",
+        "needs_further_validation": true,
+        "disclaimer": "相关关系，不代表因果"
+      },
+      {
+        "text": "基于 2152 对样本，相关系数为 -0.038，呈负相关（相关关系，不代表因果）。",
+        "type": "risk",
+        "evidence_refs": [
+          "correlation"
+        ],
+        "numbers": [
+          {
+            "value": -0.038,
+            "label": "相关系数",
+            "ref_step": "correlation",
+            "ref_kind": "summary",
+            "ref_keys": {
+              "field": "coefficient"
+            }
+          },
+          {
+            "value": 2152.0,
+            "label": "样本对数",
+            "ref_step": "correlation",
+            "ref_kind": "summary",
+            "ref_keys": {
+              "field": "n"
+            }
+          }
+        ],
+        "confidence": "medium",
+        "confidence_reason": "相关分析仅反映相关关系。",
+        "needs_further_validation": true,
+        "disclaimer": "相关关系，不代表因果"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "各品类销售额占比如何？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "share",
+        "description": "按「品类」拆解「金额」的占比",
+        "depends_on": [],
+        "op": "share",
+        "params": {
+          "dimension": "品类",
+          "metric": "金额",
+          "func": "sum"
+        }
+      }
+    ],
+    "expected_shape": "占比拆解结果",
+    "chart_hint": "pie"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "各渠道花费对比如何？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "group_by",
+        "description": "按「channel」对「spend」sum",
+        "depends_on": [],
+        "op": "group_by",
+        "params": {
+          "dimension": "channel",
+          "metric": "spend",
+          "func": "sum",
+          "order": "desc",
+          "limit": null
+        }
+      }
+    ],
+    "expected_shape": "分组聚合结果",
+    "chart_hint": "bar"
+  }
+}

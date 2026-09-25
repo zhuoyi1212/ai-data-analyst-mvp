@@ -1,0 +1,81 @@
+{
+  "response": {
+    "questions": [
+      {
+        "text": "全部库存记录的平均期末库存是多少？",
+        "category": "overview",
+        "rationale": "「ending_stock」是库存核心指标，适合先看平均水平",
+        "fields": [
+          "ending_stock"
+        ],
+        "target_op": "aggregate",
+        "confidence": "high"
+      },
+      {
+        "text": "期末库存随时间如何变化？",
+        "category": "trend",
+        "rationale": "「date」覆盖两个月，可对「ending_stock」观察趋势",
+        "fields": [
+          "date",
+          "ending_stock"
+        ],
+        "target_op": "time_series",
+        "confidence": "high"
+      },
+      {
+        "text": "不同品类的期末库存如何对比？",
+        "category": "comparison",
+        "rationale": "「category」是分类维度，可对「ending_stock」分组对比",
+        "fields": [
+          "category",
+          "ending_stock"
+        ],
+        "target_op": "group_by",
+        "confidence": "high"
+      },
+      {
+        "text": "各仓库出库量的占比如何？",
+        "category": "share",
+        "rationale": "「warehouse」是枚举维度，可拆解「stock_out」的占比",
+        "fields": [
+          "warehouse",
+          "stock_out"
+        ],
+        "target_op": "share",
+        "confidence": "high"
+      },
+      {
+        "text": "出库量最高的品类是哪些？",
+        "category": "ranking",
+        "rationale": "「category」是分类维度，可按「stock_out」排名",
+        "fields": [
+          "category",
+          "stock_out"
+        ],
+        "target_op": "top_n",
+        "confidence": "high"
+      },
+      {
+        "text": "期末库存是否存在异常负值？",
+        "category": "anomaly",
+        "rationale": "「ending_stock」正常应为非负数，需要离群检测识别异常",
+        "fields": [
+          "ending_stock"
+        ],
+        "target_op": "outlier_flag",
+        "confidence": "high"
+      },
+      {
+        "text": "入库量与出库量的相关性如何？",
+        "category": "correlation",
+        "rationale": "「stock_in」与「stock_out」反映进销联动，可量化相关关系",
+        "fields": [
+          "stock_in",
+          "stock_out"
+        ],
+        "target_op": "correlation",
+        "confidence": "high"
+      }
+    ]
+  }
+}

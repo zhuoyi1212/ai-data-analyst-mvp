@@ -1,0 +1,50 @@
+{
+  "response": {
+    "insights": [
+      {
+        "text": "在「warehouse」维度下，华北三仓 的数值最高，为 46330.5。",
+        "type": "comparison",
+        "evidence_refs": [
+          "top_n"
+        ],
+        "numbers": [
+          {
+            "value": 46330.5,
+            "label": "华北三仓",
+            "ref_step": "top_n",
+            "ref_kind": "row",
+            "ref_keys": {
+              "warehouse": "华北三仓"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "分组聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      },
+      {
+        "text": "排序最末的成员是 华东一仓，对应数值为 40642.2。",
+        "type": "comparison",
+        "evidence_refs": [
+          "top_n"
+        ],
+        "numbers": [
+          {
+            "value": 40642.2,
+            "label": "华东一仓",
+            "ref_step": "top_n",
+            "ref_kind": "row",
+            "ref_keys": {
+              "warehouse": "华东一仓"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "分组聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      }
+    ]
+  }
+}

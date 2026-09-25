@@ -1,0 +1,23 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "会话数随时间的趋势如何？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "time_series",
+        "description": "按 week 对「sessions」sum",
+        "depends_on": [],
+        "op": "time_series",
+        "params": {
+          "date_column": "date",
+          "granularity": "week",
+          "metric": "sessions",
+          "func": "sum"
+        }
+      }
+    ],
+    "expected_shape": "时间序列聚合结果",
+    "chart_hint": "line"
+  }
+}

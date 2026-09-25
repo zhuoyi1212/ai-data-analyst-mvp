@@ -1,0 +1,66 @@
+{
+  "response": {
+    "fields": [
+      {
+        "name": "date",
+        "semantic_type": "date",
+        "meaning": "统计日期",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "dau",
+        "semantic_type": "metric",
+        "meaning": "日活跃用户数",
+        "unit": "人",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "new_users",
+        "semantic_type": "metric",
+        "meaning": "当日新增注册用户数",
+        "unit": "人",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "sessions",
+        "semantic_type": "metric",
+        "meaning": "当日会话次数",
+        "unit": "次",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "avg_duration_sec",
+        "semantic_type": "metric",
+        "meaning": "平均会话时长",
+        "unit": "秒",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "tickets",
+        "semantic_type": "metric",
+        "meaning": "当日客服工单数",
+        "unit": "单",
+        "candidates": [
+          "当日新增工单数量",
+          "客服处理完成工单数",
+          "异常事件计数"
+        ],
+        "confidence": "medium"
+      },
+      {
+        "name": "satisfaction",
+        "semantic_type": "metric",
+        "meaning": "用户满意度评分",
+        "unit": "分",
+        "candidates": [],
+        "confidence": "high"
+      }
+    ]
+  }
+}

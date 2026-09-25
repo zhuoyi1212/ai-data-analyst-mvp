@@ -1,0 +1,44 @@
+{
+  "response": {
+    "questions": [
+      {
+        "text": "不同优先级的处理时长如何对比？",
+        "rationale": "「priority」是分类维度，可对「handle_hours」分组",
+        "fields": [
+          "priority",
+          "handle_hours"
+        ],
+        "target_op": "group_by",
+        "plan_hint": {
+          "dimension": "priority",
+          "metric": "handle_hours",
+          "func": "mean"
+        }
+      },
+      {
+        "text": "各问题类型工单量占比如何？",
+        "rationale": "「issue_type」是枚举维度，可拆解工单结构",
+        "fields": [
+          "issue_type",
+          "ticket_id"
+        ],
+        "target_op": "share",
+        "plan_hint": {
+          "dimension": "issue_type",
+          "metric": "ticket_id",
+          "func": "count"
+        }
+      },
+      {
+        "text": "满意度与处理时长的相关性如何？",
+        "rationale": "「satisfaction」与「handle_hours」可能相关",
+        "fields": [
+          "satisfaction",
+          "handle_hours"
+        ],
+        "target_op": "correlation",
+        "plan_hint": {}
+      }
+    ]
+  }
+}

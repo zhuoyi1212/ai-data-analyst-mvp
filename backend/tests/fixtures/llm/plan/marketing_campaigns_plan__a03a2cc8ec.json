@@ -1,0 +1,23 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "收入随时间的趋势如何？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "time_series",
+        "description": "按 month 对「revenue」sum",
+        "depends_on": [],
+        "op": "time_series",
+        "params": {
+          "date_column": "date",
+          "granularity": "month",
+          "metric": "revenue",
+          "func": "sum"
+        }
+      }
+    ],
+    "expected_shape": "时间序列聚合结果",
+    "chart_hint": "line"
+  }
+}

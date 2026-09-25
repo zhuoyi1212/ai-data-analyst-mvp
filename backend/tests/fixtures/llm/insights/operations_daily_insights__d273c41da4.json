@@ -1,0 +1,50 @@
+{
+  "response": {
+    "insights": [
+      {
+        "text": "2024-06-10 出现周期峰值，数值为 109553.0。",
+        "type": "trend",
+        "evidence_refs": [
+          "time_series"
+        ],
+        "numbers": [
+          {
+            "value": 109553.0,
+            "label": "2024-06-10",
+            "ref_step": "time_series",
+            "ref_kind": "row",
+            "ref_keys": {
+              "date": "2024-06-10"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "时间序列聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      },
+      {
+        "text": "2024-01-01 为周期谷值，数值为 59944.0。",
+        "type": "trend",
+        "evidence_refs": [
+          "time_series"
+        ],
+        "numbers": [
+          {
+            "value": 59944.0,
+            "label": "2024-01-01",
+            "ref_step": "time_series",
+            "ref_kind": "row",
+            "ref_keys": {
+              "date": "2024-01-01"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "时间序列聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      }
+    ]
+  }
+}

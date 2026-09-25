@@ -1,0 +1,47 @@
+{
+  "response": {
+    "questions": [
+      {
+        "text": "各区域销售额排名前五是哪些？",
+        "rationale": "「区域」为地理维度，可对「金额」继续下钻排名",
+        "fields": [
+          "区域",
+          "金额"
+        ],
+        "target_op": "top_n",
+        "plan_hint": {
+          "dimension": "区域",
+          "metric": "金额",
+          "func": "sum",
+          "n": 5
+        }
+      },
+      {
+        "text": "销售额按月趋势如何？",
+        "rationale": "「日期」为日期字段，可对「金额」按月汇总看趋势",
+        "fields": [
+          "日期",
+          "金额"
+        ],
+        "target_op": "time_series",
+        "plan_hint": {
+          "granularity": "month"
+        }
+      },
+      {
+        "text": "各品类销售额占比如何？",
+        "rationale": "「品类」是分类维度，可对「金额」做占比拆解",
+        "fields": [
+          "品类",
+          "金额"
+        ],
+        "target_op": "share",
+        "plan_hint": {
+          "dimension": "品类",
+          "metric": "金额",
+          "func": "sum"
+        }
+      }
+    ]
+  }
+}

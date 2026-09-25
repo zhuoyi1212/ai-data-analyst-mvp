@@ -1,0 +1,24 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "入库量最高的仓库是哪些？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "top_n",
+        "description": "按「stock_in」sum，取「warehouse」前 3 名",
+        "depends_on": [],
+        "op": "top_n",
+        "params": {
+          "dimension": "warehouse",
+          "metric": "stock_in",
+          "func": "sum",
+          "n": 3,
+          "order": "desc"
+        }
+      }
+    ],
+    "expected_shape": "排名截取结果",
+    "chart_hint": "bar"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "各问题类型工单量占比如何？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "share",
+        "description": "按「issue_type」拆解「记录数」的占比",
+        "depends_on": [],
+        "op": "share",
+        "params": {
+          "dimension": "issue_type",
+          "metric": null,
+          "func": "count"
+        }
+      }
+    ],
+    "expected_shape": "占比拆解结果",
+    "chart_hint": "pie"
+  }
+}

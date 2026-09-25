@@ -1,0 +1,24 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "各品类平均期末库存如何对比？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "group_by",
+        "description": "按「category」对「ending_stock」mean",
+        "depends_on": [],
+        "op": "group_by",
+        "params": {
+          "dimension": "category",
+          "metric": "ending_stock",
+          "func": "mean",
+          "order": "desc",
+          "limit": null
+        }
+      }
+    ],
+    "expected_shape": "分组聚合结果",
+    "chart_hint": "bar"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "各区域销售额排名前五是哪些？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "top_n",
+        "description": "按「金额」sum，取「区域」前 5 名",
+        "depends_on": [],
+        "op": "top_n",
+        "params": {
+          "dimension": "区域",
+          "metric": "金额",
+          "func": "sum",
+          "n": 5,
+          "order": "desc"
+        }
+      }
+    ],
+    "expected_shape": "排名截取结果",
+    "chart_hint": "bar"
+  }
+}

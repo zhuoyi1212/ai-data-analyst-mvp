@@ -1,0 +1,50 @@
+{
+  "response": {
+    "insights": [
+      {
+        "text": "在「priority」维度下，P3 的数值最高，为 22.04。",
+        "type": "comparison",
+        "evidence_refs": [
+          "group_by"
+        ],
+        "numbers": [
+          {
+            "value": 22.04,
+            "label": "P3",
+            "ref_step": "group_by",
+            "ref_kind": "row",
+            "ref_keys": {
+              "priority": "P3"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "分组聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      },
+      {
+        "text": "排序最末的成员是 P0，对应数值为 19.36。",
+        "type": "comparison",
+        "evidence_refs": [
+          "group_by"
+        ],
+        "numbers": [
+          {
+            "value": 19.36,
+            "label": "P0",
+            "ref_step": "group_by",
+            "ref_kind": "row",
+            "ref_keys": {
+              "priority": "P0"
+            }
+          }
+        ],
+        "confidence": "high",
+        "confidence_reason": "分组聚合结果，数字全部接地。",
+        "needs_further_validation": false,
+        "disclaimer": null
+      }
+    ]
+  }
+}

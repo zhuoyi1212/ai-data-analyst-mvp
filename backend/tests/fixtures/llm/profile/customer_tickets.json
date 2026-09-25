@@ -1,0 +1,74 @@
+{
+  "response": {
+    "fields": [
+      {
+        "name": "ticket_id",
+        "semantic_type": "id",
+        "meaning": "工单唯一编号",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "created_at",
+        "semantic_type": "date",
+        "meaning": "工单创建时间",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "channel",
+        "semantic_type": "dimension",
+        "meaning": "工单来源渠道",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "issue_type",
+        "semantic_type": "dimension",
+        "meaning": "问题类型",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "priority",
+        "semantic_type": "dimension",
+        "meaning": "工单优先级",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "handle_hours",
+        "semantic_type": "metric",
+        "meaning": "处理时长",
+        "unit": "小时",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "is_resolved",
+        "semantic_type": "dimension",
+        "meaning": "是否已解决",
+        "unit": null,
+        "candidates": [
+          "是否已解决标记",
+          "解决状态布尔字段",
+          "回访成功标识"
+        ],
+        "confidence": "medium"
+      },
+      {
+        "name": "satisfaction",
+        "semantic_type": "metric",
+        "meaning": "满意度评分",
+        "unit": "分",
+        "candidates": [],
+        "confidence": "high"
+      }
+    ]
+  }
+}

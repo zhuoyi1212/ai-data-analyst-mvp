@@ -1,0 +1,74 @@
+{
+  "response": {
+    "fields": [
+      {
+        "name": "date",
+        "semantic_type": "date",
+        "meaning": "业务日期",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "sku",
+        "semantic_type": "id",
+        "meaning": "商品 SKU 编号",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "category",
+        "semantic_type": "dimension",
+        "meaning": "商品品类",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "warehouse",
+        "semantic_type": "dimension",
+        "meaning": "所在仓库",
+        "unit": null,
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "stock_in",
+        "semantic_type": "metric",
+        "meaning": "入库数量",
+        "unit": "件",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "stock_out",
+        "semantic_type": "metric",
+        "meaning": "出库数量",
+        "unit": "件",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "ending_stock",
+        "semantic_type": "metric",
+        "meaning": "期末库存数量",
+        "unit": "件",
+        "candidates": [],
+        "confidence": "high"
+      },
+      {
+        "name": "unit_cost",
+        "semantic_type": "metric",
+        "meaning": "单位成本",
+        "unit": "元",
+        "candidates": [
+          "单位入库成本",
+          "采购单价",
+          "加权平均成本价"
+        ],
+        "confidence": "medium"
+      }
+    ]
+  }
+}

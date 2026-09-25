@@ -1,0 +1,22 @@
+{
+  "response": {
+    "plan_id": null,
+    "question": "满意度与处理时长的相关性如何？",
+    "data_scope": "数据质量处理后的全部数据，无额外筛选条件",
+    "steps": [
+      {
+        "step_id": "correlation",
+        "description": "计算「satisfaction」与「handle_hours」的皮尔逊相关系数",
+        "depends_on": [],
+        "op": "correlation",
+        "params": {
+          "column_x": "satisfaction",
+          "column_y": "handle_hours",
+          "method": "pearson"
+        }
+      }
+    ],
+    "expected_shape": "相关系数计算结果",
+    "chart_hint": "scatter"
+  }
+}

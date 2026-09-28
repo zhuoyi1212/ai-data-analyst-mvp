@@ -66,6 +66,7 @@ class AggFunc(str, Enum):
     count_distinct = "count_distinct"
     min = "min"
     max = "max"
+    last = "last"  # 期末/末点快照值（库存等非跨期可加指标）
 
 
 class SortOrder(str, Enum):

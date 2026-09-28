@@ -54,20 +54,21 @@ def test_dashboard_synthesize_and_get(api_store, tmp_path: Path):
     payload = resp.json()
     artifact = DashboardArtifact.model_validate(payload)  # 契约可解析
     assert artifact.bundle_id
+    assert artifact.run_id  # T01：产物携带运行版本
     assert len(artifact.kpis) >= 1
     assert [s.section_id for s in artifact.sections] == [
         "overview", "trend", "structure", "diagnosis", "detail"
     ]
-    # 每个成功 View 都能在 sections 中追溯
-    success_ids = {
-        v["view_id"] for v in execution["views"] if v["status"] == "success"
+    # T04：只有 status=success 且可消费（pass/warn）的 View 才能进 sections
+    consumable_ids = {
+        v["view_id"] for v in execution["views"] if v.get("consumable", True)
     }
     slotted = {vid for s in artifact.sections for vid in s.view_ids}
-    assert slotted == success_ids
+    assert slotted == consumable_ids
 
-    # GET 恢复 + dashboard.json 落盘
+    # GET 恢复 + dashboard.json 按运行版本落盘（runs/{run_id}/）
     got = client.get(f"/sessions/{sid}/dashboard")
     assert got.status_code == 200
     assert got.json()["bundle_id"] == artifact.bundle_id
-    path = api_store / sid / "bundle" / "dashboard.json"
+    path = api_store / sid / "bundle" / "runs" / artifact.run_id / "dashboard.json"
     assert path.exists()

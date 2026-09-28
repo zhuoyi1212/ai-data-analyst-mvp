@@ -30,6 +30,12 @@ class OpResult:
 
 # ---------------------------------------------------------------- 工具
 
+def _last_valid(series: pd.Series) -> float:
+    """期末/末点快照：窗口内最后一个非空观测；全空返回 NaN。"""
+    valid = series.dropna()
+    return float(valid.iloc[-1]) if len(valid) else float("nan")
+
+
 _AGG_PANDAS: dict[str, str | Callable] = {
     "sum": "sum",
     "mean": "mean",
@@ -38,11 +44,13 @@ _AGG_PANDAS: dict[str, str | Callable] = {
     "count_distinct": "nunique",
     "min": "min",
     "max": "max",
+    "last": _last_valid,
 }
 
 _AGG_LABEL = {
     "sum": "求和", "mean": "平均值", "median": "中位数", "count": "计数",
     "count_distinct": "去重计数", "min": "最小值", "max": "最大值",
+    "last": "期末值",
 }
 
 _PANDAS_FREQ = {"day": "D", "week": "W", "month": "M", "quarter": "Q", "year": "Y"}
@@ -236,40 +244,33 @@ def op_time_series(df: pd.DataFrame, p: Any) -> OpResult:
 
 
 def op_period_compare(df: pd.DataFrame, p: Any) -> OpResult:
-    work, nat = _period_series(df, p.date_column)
-    freq = {"yoy": "Y", "mom": "M", "wow": "W"}[p.period.value]
-    label_map = _PERIOD_LABEL_FMT[freq]
-    if p.func.value == "count" and not p.metric:
-        grouped = work.groupby(work[p.date_column].dt.to_period(freq)).size()
-    else:
-        s, _, _ = _metric_input(work, p.metric, p.func.value)
-        tmp = work.assign(_m=s)
-        grouped = tmp.groupby(tmp[p.date_column].dt.to_period(freq))["_m"].agg(
-            _AGG_PANDAS[p.func.value])
-    if len(grouped) < 1:
-        raise EngineError("日期字段中没有可用于同环比的有效时间数据。")
-    current_period = grouped.index.max()
-    prev_period = current_period - 1
-    cur = grouped.get(current_period, np.nan)
-    if prev_period not in grouped.index:
-        raise EngineError(
-            f"缺少上一周期（{label_map(prev_period)}）的数据，无法计算"
-            f"{'同比' if p.period.value == 'yoy' else '环比'}。"
+    """同/环比（T05）：窗口对齐、残缺期等长 MTD、负基数变化口径全部走
+    period_compare 共享模块，算子与 Dashboard KPI/Finding 同一实现。"""
+    from app.services.period_compare import PeriodCompareError, period_comparison
+
+    try:
+        summary = period_comparison(
+            df, p.date_column, p.metric, p.func.value, p.period.value
         )
-    prev = grouped.loc[prev_period]
-    growth = None if prev == 0 else float((cur - prev) / prev * 100)
-    if prev == 0:
-        raise EngineError("上一周期数值为 0，增长率无定义，无法进行同环比对比。")
+    except PeriodCompareError as exc:
+        raise EngineError(str(exc)) from exc
+    if summary is None:
+        raise EngineError("日期字段中没有可用于同环比的有效时间数据。")
+
     out = pd.DataFrame({
-        "period": [label_map(current_period), label_map(prev_period)],
-        _VALUE_COL: [float(cur), float(prev)],
+        "period": [summary["current_label"], summary["compare_label"]],
+        _VALUE_COL: [summary["current_value"], summary["previous_value"]],
     })
-    formula = (f"{label_map(current_period)} vs {label_map(prev_period)}"
-               f"「{p.metric or '行数'}」{_AGG_LABEL[p.func.value]}及变化率")
-    return OpResult(out, formula, {
-        "current_value": float(cur), "previous_value": float(prev),
-        "growth_pct": growth, "null_dates_excluded": nat,
-    })
+    formula = (
+        f"{summary['comparison']}：{summary['current_label']} vs "
+        f"{summary['compare_label']}，「{p.metric or '行数'}」"
+        f"{_AGG_LABEL[p.func.value]}"
+        + ("（残缺期，按等长窗口比较）" if summary["completeness"] != "complete" else "")
+    )
+    summary["null_dates_excluded"] = int(
+        pd.to_datetime(df[p.date_column], errors="coerce").isna().sum()
+    )
+    return OpResult(out, formula, summary)
 
 
 # ---------------------------------------------------------------- 8. compare_groups
@@ -292,6 +293,18 @@ def op_compare_groups(df: pd.DataFrame, p: Any) -> OpResult:
 
 # ---------------------------------------------------------------- 9. correlation
 
+def _pearson_r(x: pd.Series, y: pd.Series) -> float:
+    """纯 numpy Pearson，不依赖 scipy（锁文件全新环境也确定可用）。"""
+    xa = x.to_numpy(dtype=float)
+    ya = y.to_numpy(dtype=float)
+    xc = xa - xa.mean()
+    yc = ya - ya.mean()
+    denom = float(np.sqrt((xc ** 2).sum() * (yc ** 2).sum()))
+    if denom == 0:
+        return float("nan")
+    return float((xc * yc).sum() / denom)
+
+
 def op_correlation(df: pd.DataFrame, p: Any) -> OpResult:
     sx = _numeric_series(df, p.column_x)
     sy = _numeric_series(df, p.column_y)
@@ -299,7 +312,13 @@ def op_correlation(df: pd.DataFrame, p: Any) -> OpResult:
     if len(pairs) < 3:
         raise EngineError("有效样本不足 3 对，无法进行相关分析。")
     method = p.method.value
-    r = float(pairs["x"].corr(pairs["y"], method=method))
+    if method == "spearman":
+        # Spearman = 秩的 Pearson：先取平均秩（结处理与 scipy.stats.spearmanr 一致），
+        # 再用纯 numpy Pearson，避免锁文件环境缺 scipy 时 ModuleNotFoundError（反例 10）。
+        ranked = pairs[["x", "y"]].rank(method="average")
+        r = _pearson_r(ranked["x"], ranked["y"])
+    else:
+        r = _pearson_r(pairs["x"], pairs["y"])
     if np.isnan(r):
         raise EngineError("相关系数无法计算（可能存在常量列）。")
     out = pairs.rename(columns={"x": p.column_x, "y": p.column_y}).reset_index(drop=True)

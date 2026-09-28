@@ -23,18 +23,20 @@ from test_bundle_planner import _ready_session
 def test_all_views_execute_successfully_with_ledger(name: str, tmp_path: Path):
     store, sid, dictionary, snapshot = _ready_session(name, tmp_path)
     bundle = build_bundle(dictionary, snapshot, snapshot_rows=len(snapshot), title=name)
+    store.write_bundle(sid, bundle.model_dump(mode="json"))  # T01：建立 run 版本
     summary = execute_bundle(sid, store, bundle)
 
     assert summary.total == len(bundle.analysis_views)
     assert summary.failed == 0
     assert summary.succeeded == summary.total
 
+    run_dir = store.active_run_dir(sid)
     # 每个成功 View：结果/台账/校验三件套独立落盘，且数值非空
     for view, result in zip(bundle.analysis_views, summary.views):
         assert result.status == ViewStatus.success
         assert result.result_rows_total > 0
         assert result.steps, f"{name}/{view.view_id} 缺少步骤记录"
-        vdir = store.bundle_dir(sid) / "views" / view.view_id
+        vdir = run_dir / "views" / view.view_id
         assert (vdir / "result.parquet").exists()
         ledger = json.loads((vdir / "ledger.json").read_text(encoding="utf-8"))
         assert ledger["question"] == view.question
@@ -42,12 +44,13 @@ def test_all_views_execute_successfully_with_ledger(name: str, tmp_path: Path):
         assert ledger["steps"], "台账必须保留完整计算过程"
         checks = json.loads((vdir / "validation.json").read_text(encoding="utf-8"))
         codes = {c["code"] for c in checks["checks"]}
-        assert codes == {"coverage", "shape", "null_handling"}
+        # T04：三件基础校验必在；share 视角额外有 reconciliation 对账
+        assert {"coverage", "shape", "null_handling"} <= codes
         assert not any(c["level"] == "fail" for c in checks["checks"])
 
     # 汇总落盘
     persisted = json.loads(
-        (store.bundle_dir(sid) / "execution.json").read_text(encoding="utf-8"))
+        (run_dir / "execution.json").read_text(encoding="utf-8"))
     assert persisted["succeeded"] == summary.total
 
     # 视图级隔离：旧单 plan 槽位未被触碰
@@ -90,6 +93,7 @@ def test_partial_success_isolates_bad_view(tmp_path: Path):
         analysis_views=bundle.analysis_views + [bad],
     )
 
+    store.write_bundle(sid, poisoned.model_dump(mode="json"))  # T01：建立 run 版本
     summary = execute_bundle(sid, store, poisoned)
     assert summary.total == len(poisoned.analysis_views)
     assert summary.failed == 1
@@ -101,7 +105,7 @@ def test_partial_success_isolates_bad_view(tmp_path: Path):
     assert failed.steps == []
 
     # 坏 View 不产生任何落盘产物
-    bad_dir = store.bundle_dir(sid) / "views" / "view_99"
+    bad_dir = store.active_run_dir(sid) / "views" / "view_99"
     assert not (bad_dir / "ledger.json").exists()
     assert not (bad_dir / "result.parquet").exists()
 

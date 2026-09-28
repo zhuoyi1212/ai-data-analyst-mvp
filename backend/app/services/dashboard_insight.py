@@ -65,7 +65,8 @@ def _fmt_pct(v: float) -> str:
 def _success_views(
     bundle: AnalysisBundle, execution: BundleExecutionResult
 ) -> dict[str, AnalysisView]:
-    ok = {r.view_id for r in execution.views if r.status == ViewStatus.success}
+    """T04：与 KPI/图表同一门禁——只取 status=success 且结果可消费的 View。"""
+    ok = {r.view_id for r in execution.views if r.consumable}
     return {v.view_id: v for v in bundle.analysis_views if v.view_id in ok}
 
 
@@ -345,37 +346,76 @@ def _detect_relationship(
 
 # ----------------------------------------------------------------- 4. 趋势
 
+_GRAN_TO_MODE = {"month": "mom", "week": "wow", "year": "yoy"}
+
+
+def _metric_is_rate(dictionary: DataDictionary, metric: str) -> bool:
+    from app.services.metric_spec import effective_metric_spec
+    fp = next((f for f in dictionary.fields if f.name == metric), None)
+    spec = effective_metric_spec(fp) if fp else None
+    return bool(spec and not spec.additive and (spec.unit == "%" or spec.denominator))
+
+
 def _detect_trend(
-    sid: str, store: SessionStore, views: dict[str, AnalysisView],
+    sid: str, store: SessionStore,
+    views: dict[str, AnalysisView], dictionary: DataDictionary,
 ) -> Finding | None:
     tv = next((v for v in views.values() if v.type is ViewType.trend), None)
     if tv is None or not tv.metric_fields:
         return None
-    df = _load(store, sid, tv.view_id)
-    if len(df) < 2 or "value" not in df.columns:
-        return None
-    prev, last = df["value"].iloc[-2], df["value"].iloc[-1]
-    if pd.isna(prev) or pd.isna(last) or prev == 0:
-        return None
-    change = (float(last) - float(prev)) / abs(float(prev))
-    if abs(change) < MIN_TREND_CHANGE:
-        return None
-    date_col = tv.plan.steps[-1].params.date_column
-    gran = tv.plan.steps[-1].params.granularity.value
+    params = tv.plan.steps[-1].params
+    date_col = params.date_column
+    gran = params.granularity.value
     metric = tv.metric_fields[0]
-    growing = change > 0
+    mode = _GRAN_TO_MODE.get(gran, "mom")
     period_name = {"month": "月", "week": "周", "day": "日",
                    "quarter": "季", "year": "年"}.get(gran, "期")
-    t_prev = pd.Timestamp(df[date_col].iloc[-2]).strftime("%Y-%m")
-    t_last = pd.Timestamp(df[date_col].iloc[-1]).strftime("%Y-%m")
+
+    # T05：直接在快照上走 period_comparison 等长窗口口径，
+    # 不拿趋势图最后两个可能残缺的聚合桶直接相除（反例 5/6）。
+    from app.services.period_compare import PeriodCompareError, period_comparison
+    snapshot = store.load_snapshot(sid)
+    try:
+        pc = period_comparison(
+            snapshot, date_col, metric, params.func.value, mode,
+            is_rate=_metric_is_rate(dictionary, metric),
+        )
+    except PeriodCompareError:
+        return None
+    if pc is None:
+        return None
+
+    prev, last = pc["previous_value"], pc["current_value"]
+    partial_note = (
+        "（当期未结束，按截至日等长窗口比较）" if pc["completeness"] != "complete" else ""
+    )
+    if pc["growth_pct"] is None:
+        status = pc.get("status") or ""
+        if pc["delta"] is None or (
+            "扭亏" not in status and "亏损" not in status
+        ):
+            return None
+        growing = pc["delta"] > 0
+        title = f"{status}：{metric} 变化 {pc['delta']:+,.0f}"
+        change_text = f"绝对变化 {pc['delta']:+,.0f}（负基数不展示增长率）"
+    else:
+        growth = pc["growth_pct"] / 100.0
+        if abs(growth) < MIN_TREND_CHANGE:
+            return None
+        growing = growth > 0
+        title = (
+            f"{'增长' if growing else '下滑'}信号：{metric} "
+            f"环比{'增长' if growing else '下滑'} {abs(growth) * 100:.1f}%"
+        )
+        change_text = f"变化 {abs(growth) * 100:.1f}%"
     return Finding(
         finding_id="",
-        title=f"{'增长' if growing else '下滑'}信号：{metric} 环比{('增长' if growing else '下滑')} {abs(change) * 100:.1f}%",
+        title=title,
         summary=(
             f"现象：{metric} 最近一个{period_name}出现明显{'增长' if growing else '下滑'}。"
-            f"位置：{t_prev} → {t_last}（按{period_name}聚合口径）。"
+            f"位置：{pc['compare_label']} → {pc['current_label']}（{pc['comparison']}口径）。"
             f"量化影响：{_fmt_num(float(prev))} → {_fmt_num(float(last))}，"
-            f"变化 {abs(change) * 100:.1f}%。"
+            f"{change_text}{partial_note}。"
             f"建议：{'复盘增长来源并判断是否可持续' if growing else '排查当期促销、渠道或供给因素，确认是否趋势性下滑'}。"
         ),
         type="growth" if growing else "decline",
@@ -424,7 +464,7 @@ def detect_findings(
         if risk:
             raw.append(risk)
     raw.extend(_detect_relationship(session_id, store, views, execution))
-    t = _detect_trend(session_id, store, views)
+    t = _detect_trend(session_id, store, views, dictionary)
     if t:
         raw.append(t)
 

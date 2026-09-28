@@ -31,10 +31,11 @@ from app.schemas.bundle import (
     AnalysisView,
     ViewType,
 )
-from app.schemas.common import AggFunc
-from app.schemas.dictionary import DataDictionary, FieldProfile
+from app.schemas.common import AggFunc, ChartType
+from app.schemas.dictionary import DataDictionary, FieldProfile, MetricSpec
 from app.schemas.plan import AnalysisPlan
 from app.services.derived_metrics import detect_derived_metrics
+from app.services.metric_spec import effective_metric_spec
 from app.services.offline_fallback import (
     _granularity,
     _high_cardinality_dimension,
@@ -70,8 +71,33 @@ def _metric_score(name: str) -> int:
 
 
 def _metric_func(name: str) -> AggFunc:
-    """率/单价/时长类取均值，其余可加总。确定性，禁止 LLM 参与。"""
+    """率/单价/时长类取均值，其余可加总。确定性，禁止 LLM 参与。
+
+    历史命名启发保留给单问题链路；Bundle 链路统一走 _spec_func（MetricSpec）。
+    """
     return AggFunc.mean if _RATE_HINT.search(name) else AggFunc.sum
+
+
+# MetricSpec.aggregation → 算子 AggFunc；"none"（口径待澄清）不自动聚合
+_SPEC_AGG: dict[str, AggFunc] = {
+    "sum": AggFunc.sum,
+    "mean": AggFunc.mean,
+    "median": AggFunc.median,
+    "count": AggFunc.count,
+    "count_distinct": AggFunc.count_distinct,
+    "snapshot_last": AggFunc.last,
+}
+_FUNC_ZH = {
+    AggFunc.sum: "总和", AggFunc.mean: "平均值", AggFunc.median: "中位数",
+    AggFunc.count: "计数", AggFunc.count_distinct: "去重计数",
+    AggFunc.min: "最小值", AggFunc.max: "最大值", AggFunc.last: "期末值",
+}
+
+
+def _spec_func(spec: MetricSpec | None) -> AggFunc | None:
+    if spec is None:
+        return AggFunc.sum  # 兜底：未识别指标维持历史口径
+    return _SPEC_AGG.get(spec.aggregation)
 
 
 def _ranked_metrics(dictionary: DataDictionary) -> list[FieldProfile]:
@@ -121,6 +147,7 @@ class CandidateGenerator:
         self, dictionary: DataDictionary, df: pd.DataFrame | None
     ) -> list[Candidate]:
         metrics = _ranked_metrics(dictionary)
+        specs = {m.name: effective_metric_spec(m) for m in metrics}
         dims = _ranked_dimensions(dictionary)
         date_fields = dictionary.date_fields()
         date_col = date_fields[0] if date_fields else None
@@ -129,20 +156,27 @@ class CandidateGenerator:
 
         out: list[Candidate] = []
 
+        def _agg(m: FieldProfile) -> AggFunc | None:
+            return _spec_func(specs.get(m.name))
+
         # 1) overview：每个高价值指标各一个候选（多指标对照的基础）
+        #    口径为 none（关键歧义待澄清）的指标不生成自动聚合视角
         for m in metrics[:3]:
-            func = _metric_func(m.name)
+            func = _agg(m)
+            if func is None:
+                continue
+            zh = _FUNC_ZH.get(func, func.value)
             out.append(Candidate(
                 type=ViewType.overview,
                 title=f"「{m.name}」总览",
-                question=f"全部记录的「{m.name}」{_AGG_LABEL[func]}是多少？",
+                question=f"全部记录的「{m.name}」{zh}是多少？",
                 op="aggregate",
                 hint={"column": m.name, "func": func.value},
                 fields=[m.name],
                 metric_fields=[m.name],
                 dimension_fields=[],
                 family_key=("overview", m.name),
-                reason=f"{m.name} 是识别出的高价值指标（价值分 {_metric_score(m.name)}）",
+                reason=f"{m.name} 是识别出的高价值指标（价值分 {_metric_score(m.name)}，口径 {zh}）",
                 priority_group=0,
             ))
 
@@ -152,7 +186,9 @@ class CandidateGenerator:
             primary = metrics[0]
             pnl_extra = [m for m in metrics[1:] if _metric_score(m.name) >= 4][:1]
             for i, m in enumerate([primary] + pnl_extra):
-                func = _metric_func(m.name)
+                func = _agg(m)
+                if func is None:
+                    continue
                 out.append(Candidate(
                     type=ViewType.trend,
                     title=f"「{m.name}」按{gran.value}趋势",
@@ -174,11 +210,15 @@ class CandidateGenerator:
 
         # 3) 维度分布族：comparison(group_by) / breakdown(share) / ranking(top_n)
         #    低中基数维度（≤30）→ 对比与占比；任意维度 → Top N（高基数更优）
+        #    T03 铁律：非可加指标（率/评分/期末库存）不生成份额视角，
+        #    含合法负值组成的份额禁用饼图（share_bar 代替）。
         low_dims = [d for d in dims if 1 < (d.cardinality or 0) <= 30][:3]
         hc = _high_cardinality_dimension(dictionary, exclude=set())
-        top_metrics = metrics[:2]  # 多指标结构对照
+        top_metrics = [m for m in metrics[:2] if _agg(m) is not None]
         for m in top_metrics:
-            func = _metric_func(m.name)
+            func = _agg(m)
+            spec = specs.get(m.name)
+            additive = bool(spec and spec.additive)
             for d in low_dims:
                 out.append(Candidate(
                     type=ViewType.comparison,
@@ -193,19 +233,30 @@ class CandidateGenerator:
                     reason=f"「{d.name}」有 {d.cardinality} 个成员，适合分组对比",
                     priority_group=2,
                 ))
-                out.append(Candidate(
-                    type=ViewType.breakdown,
-                    title=f"「{m.name}」按「{d.name}」结构",
-                    question=f"「{m.name}」在各「{d.name}」之间的占比结构如何？",
-                    op="share",
-                    hint={"dimension": d.name, "metric": m.name, "func": func.value},
-                    fields=[d.name, m.name],
-                    metric_fields=[m.name],
-                    dimension_fields=[d.name],
-                    family_key=("dist", d.name, m.name),  # 与对比同族：同维同指标只留一个
-                    reason=f"「{d.name}」{d.cardinality} 个成员，占比可读",
-                    priority_group=2,
-                ))
+                if additive:
+                    share_hint = {
+                        "dimension": d.name, "metric": m.name, "func": func.value,
+                    }
+                    # 负值组成（利润等）不用饼图：份额条形图展示正负贡献
+                    if spec and spec.allowed_negative:
+                        share_hint["chart_override"] = ChartType.share_bar.value
+                    out.append(Candidate(
+                        type=ViewType.breakdown,
+                        title=f"「{m.name}」按「{d.name}」结构",
+                        question=f"「{m.name}」在各「{d.name}」之间的占比结构如何？",
+                        op="share",
+                        hint=share_hint,
+                        fields=[d.name, m.name],
+                        metric_fields=[m.name],
+                        dimension_fields=[d.name],
+                        family_key=("dist", d.name, m.name),  # 与对比同族：同维同指标只留一个
+                        reason=(
+                            f"「{d.name}」{d.cardinality} 个成员，占比可读"
+                            + ("（含可能的负值，用条形图展示正负贡献，不用饼图）"
+                               if spec and spec.allowed_negative else "")
+                        ),
+                        priority_group=2,
+                    ))
             rank_dim = hc or (low_dims[2] if len(low_dims) > 2 else None)
             if rank_dim is not None:
                 out.append(Candidate(
@@ -310,9 +361,13 @@ class CandidateGenerator:
         metrics: list[FieldProfile],
         df: pd.DataFrame | None,
     ) -> tuple[tuple[str, str] | None, bool]:
-        """返回 ((x, y), computed)；computed=True 表示来自快照实时规则计算。"""
-        rels = [r for r in dictionary.relations if r.type == "correlation"
-                and len(r.columns) >= 2 and r.coefficient is not None]
+        """返回 ((x, y), computed)；弱信号/无证据时返回 None（反例 4：r=0 不占位）。"""
+        rels = [
+            r for r in dictionary.relations
+            if r.type == "correlation" and len(r.columns) >= 2
+            and r.coefficient is not None
+            and abs(r.coefficient) >= CandidateGenerator.MIN_ABS_R
+        ]
         if rels:
             # 含率/折扣类指标的对优先（如 折扣 vs 利润，负相关更有业务意义），
             # 其次取绝对相关系数最大者
@@ -324,15 +379,13 @@ class CandidateGenerator:
             best = max(rels, key=rel_key)
             return (best.columns[0], best.columns[1]), False
 
-        if len(metrics) < 2:
+        if len(metrics) < 2 or df is None:
             return None, False
-        if df is None:
-            return (metrics[0].name, metrics[1].name), False
 
         # 字典未给关系：在快照上确定性计算（最多前 5 个指标，纯 pandas 无 LLM）
         cols = [m.name for m in metrics[:5] if m.name in df.columns]
         if len(cols) < 2:
-            return (metrics[0].name, metrics[1].name), False
+            return None, False
         nums = df[cols].apply(pd.to_numeric, errors="coerce")
         corr = nums.corr(method="pearson")
         best: tuple[str, str] | None = None
@@ -348,9 +401,10 @@ class CandidateGenerator:
                 if key > best_key:
                     best_key = key
                     best = (cols[i], cols[j])
+        # |r| 不显著就不生成关系视角——阴性结果不占默认 Dashboard 位置
         if best is not None and best_key[1] >= CandidateGenerator.MIN_ABS_R:
             return best, True
-        return (metrics[0].name, metrics[1].name), False
+        return None, False
 
 
 # ---------------------------------------------------------------- 选择器（可替换）
@@ -600,13 +654,16 @@ class RuleBundleSelector:
 
 def _to_view(idx: int, c: Candidate) -> AnalysisView:
     plan: AnalysisPlan = build_plan(c.question, c.op, c.hint, c.fields)
+    # 图表类型可被候选口径覆盖（如负值组成的份额视角禁用饼图 → share_bar）
+    override = c.hint.get("chart_override")
+    chart = ChartType(override) if override else VIEW_CHART[c.type]
     return AnalysisView(
         view_id=f"view_{idx:02d}",
         title=c.title,
         type=c.type,
         question=c.question,
         plan=plan,
-        chart=VIEW_CHART[c.type],
+        chart=chart,
         priority=idx,
         metric_fields=c.metric_fields,
         dimension_fields=c.dimension_fields,

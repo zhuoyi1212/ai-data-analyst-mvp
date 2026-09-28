@@ -20,8 +20,13 @@ class IssueSeverity(str, Enum):
 
 
 # 处理动作白名单（与 UI 选项一一对应）
+# T02：fill_unknown = 分类缺失归入显式「未知」桶（保留行、明示覆盖影响）；
+# 数值指标缺失默认 keep——不默认填均值，插补值不得伪装成真实经营总量。
 ACTIONS = {
-    IssueType.missing: ["keep", "drop_rows", "fill_value", "fill_mean", "fill_median", "fill_mode"],
+    IssueType.missing: [
+        "keep", "drop_rows", "fill_unknown",
+        "fill_value", "fill_mean", "fill_median", "fill_mode",
+    ],
     IssueType.format_issue: ["convert", "keep_text"],
     IssueType.duplicate: ["drop_duplicates", "keep"],
     IssueType.outlier: ["keep", "mark", "exclude"],
@@ -53,3 +58,6 @@ class QualityReport(BaseModel):
     complete: bool = False
     snapshot_rows: int | None = None
     snapshot_hash: str | None = None
+    # P0 T02：清洗影响留痕——删除行数、插补单元格、清洗前后关键指标总量，
+    # 让「口径如何改变经营事实」在报告里可审。
+    impact: dict = Field(default_factory=dict)

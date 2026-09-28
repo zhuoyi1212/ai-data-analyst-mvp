@@ -59,11 +59,19 @@ def main(path: str) -> None:
         print(f"  - {f.name}：{f.semantic_type.value}（基数 {f.cardinality}，{how}）")
     print()
 
-    # 质量：采纳智能建议动作（apply_decisions 入参为 {issue_id: {action}} 字典）
+    # 质量（T02）：演示路径只自动采纳不改变经营事实的动作（格式转换），
+    # 缺失/离群/重复一律保留——删行、插补、去重必须由真实用户显式确认。
+    from app.services.quality_actions import safe_demo_decisions
     report = run_quality_checks(sid, store)
-    decisions = {i.issue_id: {"action": i.suggested_action} for i in report.issues}
+    decisions = safe_demo_decisions(report)
     report = apply_decisions(sid, decisions, store)
-    print(f"质量处理：{len(decisions)} 个问题已按建议处理；快照 {report.snapshot_rows} 行\n")
+    print(
+        f"质量处理：{len(decisions)} 个问题按安全默认处理（仅格式转换，"
+        f"其余保留）；快照 {report.snapshot_rows} 行"
+    )
+    if report.impact.get("dropped_rows") or report.impact.get("imputed_cells"):
+        print("  警告：安全默认不应改变行数/数值，请检查决策来源。")
+    print()
 
     # Bundle 规划 + 执行
     snapshot = store.load_snapshot(sid)

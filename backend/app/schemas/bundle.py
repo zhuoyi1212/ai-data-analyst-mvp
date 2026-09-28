@@ -92,18 +92,29 @@ class ViewStatus(str, Enum):
     skipped = "skipped"  # 预留：前置数据条件不足时不执行（Phase 1 一般在规划期剔除）
 
 
+# 有效性级别（P0 T04）：no_data 与 fail 分开——
+# 引擎成功但零有效样本不是失败，却同样不可消费，禁止拿 0 充当 KPI。
+ValidationLevel = Literal["pass", "warn", "fail", "no_data"]
+
+
 class ViewValidationItem(BaseModel):
-    """View 级轻量校验项（Phase 2 Dashboard 阶段可扩展为完整五项）。"""
+    """View 级轻量校验项（P0：coverage/shape/null_handling/reconciliation）。"""
 
     model_config = _STRICT
-    code: Literal["coverage", "shape", "null_handling"]
-    level: Literal["pass", "warn", "fail"]
+    code: Literal["coverage", "shape", "null_handling", "reconciliation"]
+    level: ValidationLevel
     detail: str = ""
     numbers: dict[str, Any] = Field(default_factory=dict)
 
 
 class ViewExecutionResult(BaseModel):
-    """单个 view 的执行结果与状态（partial success 的基本单元）。"""
+    """单个 view 的执行结果与状态（partial success 的基本单元）。
+
+    T04 起明确区分两个维度：
+    - status：引擎执行状态（success/failed/skipped）；
+    - validity：结果有效性（由 checks 汇总：pass/warn/fail/no_data）。
+    只有 status=success 且无 fail/no_data 才可被 Dashboard 消费。
+    """
 
     model_config = _STRICT
     view_id: str
@@ -122,16 +133,31 @@ class ViewExecutionResult(BaseModel):
     checks: list[ViewValidationItem] = Field(default_factory=list)
 
     @property
+    def validity(self) -> str:
+        """pass > warn > no_data > fail（取最差级别；无校验项视为 fail）。"""
+        order = {"pass": 0, "warn": 1, "no_data": 2, "fail": 3}
+        if self.status != ViewStatus.success:
+            return "fail"
+        if not self.checks:
+            return "fail"
+        return max((c.level for c in self.checks), key=lambda lv: order[lv])
+
+    @property
+    def consumable(self) -> bool:
+        """KPI / Chart / Finding / probe 共享的唯一消费门禁。"""
+        return self.validity in ("pass", "warn")
+
+    @property
     def passed(self) -> bool:
-        return self.status == ViewStatus.success and not any(
-            c.level == "fail" for c in self.checks
-        )
+        """向后兼容别名。"""
+        return self.consumable
 
 
 class BundleExecutionResult(BaseModel):
     """一次批量执行的汇总（允许部分失败）。"""
 
     model_config = _STRICT
+    run_id: str = ""  # P0 T01：执行结果归属的运行版本
     bundle_id: str
     total: int
     succeeded: int

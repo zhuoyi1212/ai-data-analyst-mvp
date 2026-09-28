@@ -163,7 +163,7 @@ def test_findings_detect_divergence_negative_member_and_correlation(tmp_path):
 def test_probe_artifacts_are_isolated_and_budgeted(tmp_path):
     store, sid = _ready_dashboard(tmp_path)
     synthesize_dashboard(sid, store)
-    probe_dir = store.bundle_dir(sid) / "probes"
+    probe_dir = store.active_run_dir(sid) / "probes"  # T01：probe 随运行版本隔离
     probes = [p for p in probe_dir.iterdir() if p.is_dir()]
     # KPI 利润率 1 个 + drilldown ≤1 个（预算上限 3）
     assert 1 <= len(probes) <= 3

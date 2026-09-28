@@ -58,8 +58,12 @@ def _apply_formats(df: pd.DataFrame, decisions: dict[str, IssueDecision]) -> pd.
     return df
 
 
+UNKNOWN_BUCKET = "未知"
+
+
 def _apply_missing(
-    df: pd.DataFrame, decisions: dict[str, IssueDecision]
+    df: pd.DataFrame, decisions: dict[str, IssueDecision],
+    imputed: dict[str, int],
 ) -> pd.DataFrame:
     drop_rows: set = set()
     for issue_id, d in decisions.items():
@@ -69,22 +73,31 @@ def _apply_missing(
         action = d.action
         if action == "keep":
             continue
+        n_missing = int(df[col].isna().sum())
         if action == "drop_rows":
             drop_rows.update(df.index[df[col].isna()].tolist())
             continue
-        if action == "fill_value":
+        if action == "fill_unknown":
+            # 分类缺失归入显式「未知」桶：行保留、覆盖可统计
+            df[col] = df[col].astype("object").fillna(UNKNOWN_BUCKET)
+            imputed[col] = imputed.get(col, 0) + n_missing
+        elif action == "fill_value":
             value = d.params.get("fill_value")
             if value is None:
                 raise ValueError(f"「{col}」选择固定值填充时必须提供 fill_value。")
             df[col] = df[col].fillna(value)
+            imputed[col] = imputed.get(col, 0) + n_missing
         elif action == "fill_mean":
             df[col] = df[col].fillna(pd.to_numeric(df[col], errors="coerce").mean())
+            imputed[col] = imputed.get(col, 0) + n_missing
         elif action == "fill_median":
             df[col] = df[col].fillna(pd.to_numeric(df[col], errors="coerce").median())
+            imputed[col] = imputed.get(col, 0) + n_missing
         elif action == "fill_mode":
             modes = df[col].mode()
             if not modes.empty:
                 df[col] = df[col].fillna(modes.iloc[0])
+                imputed[col] = imputed.get(col, 0) + n_missing
     if drop_rows:
         df = df.drop(index=list(drop_rows))
     return df
@@ -115,6 +128,37 @@ def _apply_outliers(
     return df
 
 
+# 会改变经营事实（行数/数值）的动作：演示脚本绝不自动采纳，
+# 避免把脚本选择伪装成「用户已确认」（执行清单 T02 明令禁止）。
+FACT_CHANGING_ACTIONS = {
+    "drop_rows", "drop_duplicates", "exclude",
+    "fill_value", "fill_mean", "fill_median", "fill_mode",
+}
+
+
+def safe_demo_decisions(report: QualityReport) -> dict:
+    """演示/无人值守路径的安全决策：只转格式，其余保留并明示。"""
+    decisions: dict[str, object] = {}
+    for issue in report.issues:
+        if issue.type.value == "format" and issue.suggested_action == "convert":
+            decisions[issue.issue_id] = {"action": "convert"}
+        else:
+            decisions[issue.issue_id] = {"action": "keep"}
+    return decisions
+
+
+def _numeric_totals(df: pd.DataFrame, dictionary: DataDictionary) -> dict[str, float]:
+    """关键数值指标清洗前后总量对比（插补/删行如何改变经营事实一目了然）。"""
+    totals: dict[str, float] = {}
+    for f in dictionary.fields:
+        if f.ignored or f.semantic_type.value != "metric" or f.name not in df.columns:
+            continue
+        s = pd.to_numeric(df[f.name], errors="coerce").dropna()
+        if not s.empty:
+            totals[f.name] = float(s.sum())
+    return totals
+
+
 def apply_decisions(session_id: str, raw_decisions: dict, store: SessionStore) -> QualityReport:
     report = QualityReport.model_validate(store.read_artifact(session_id, "quality"))
     dictionary = DataDictionary.model_validate(store.read_artifact(session_id, "dictionary"))
@@ -130,20 +174,61 @@ def apply_decisions(session_id: str, raw_decisions: dict, store: SessionStore) -
     }
 
     df = store.load_original(session_id)
+    rows_before = int(df.shape[0])
+    totals_before = _numeric_totals(df, dictionary)
+    imputed_cells: dict[str, int] = {}
 
     # 1) 格式转换
     df = _apply_formats(df, decisions)
-    # 2) 重复行
+    # 2) 重复行（默认 keep；只有显式 drop_duplicates 才删）
     dup = decisions.get("duplicate:rows")
+    deduped_rows = 0
     if dup is not None and dup.action == "drop_duplicates":
+        before = int(df.shape[0])
         df = df.drop_duplicates(keep="first")
+        deduped_rows = before - int(df.shape[0])
     # 3) 缺失处理
-    df = _apply_missing(df, decisions)
+    df = _apply_missing(df, decisions, imputed_cells)
     # 4) 离群处理
+    rows_before_outlier = int(df.shape[0])
     df = _apply_outliers(df, decisions, dictionary)
+    excluded_rows = rows_before_outlier - int(df.shape[0])
 
     df = df.reset_index(drop=True)
     snapshot_hash = store.save_snapshot(session_id, df)
+
+    totals_after = _numeric_totals(df, dictionary)
+    # 逐指标总量差异：默认安全路径（keep/mark/convert）下应全部为 0
+    total_deltas = {
+        col: round(totals_after.get(col, 0.0) - tot, 6)
+        for col, tot in totals_before.items()
+    }
+    dropped_rows = rows_before - int(df.shape[0])
+    report.impact = {
+        "rows_before": rows_before,
+        "rows_after": int(df.shape[0]),
+        "dropped_rows": dropped_rows,
+        "dropped_breakdown": {
+            "duplicates": int(deduped_rows),
+            "missing_rows": max(dropped_rows - deduped_rows - excluded_rows, 0),
+            "outlier_rows": int(excluded_rows),
+        },
+        "imputed_cells": imputed_cells,
+        "totals_before": totals_before,
+        "totals_after": totals_after,
+        "total_deltas": total_deltas,
+        "fact_changing_actions": sorted({
+            iid for iid, d in decisions.items()
+            if d.action in {
+                "drop_rows", "drop_duplicates", "exclude",
+                "fill_value", "fill_mean", "fill_median", "fill_mode",
+            }
+        }),
+        "note": (
+            "dropped_rows/imputed_cells 展示清洗对经营事实的影响；"
+            "默认建议（keep/mark/convert）不会改变任何指标总量。"
+        ),
+    }
 
     report.decisions = decisions
     report.complete = True

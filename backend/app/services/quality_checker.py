@@ -6,7 +6,7 @@ import re
 import pandas as pd
 
 from app.schemas.common import SemanticType
-from app.schemas.dictionary import DataDictionary
+from app.schemas.dictionary import DataDictionary, FieldProfile
 from app.schemas.quality import (
     ACTIONS,
     IssueSeverity,
@@ -14,6 +14,7 @@ from app.schemas.quality import (
     QualityIssue,
     QualityReport,
 )
+from app.services.metric_spec import effective_metric_spec
 from app.services.storage import SessionStore
 
 _CURRENCY_RE = re.compile(r"^[¥￥$£\s]*[\d,]+(?:\.\d+)?\s*$")
@@ -31,19 +32,31 @@ def _is_numeric_series(series: pd.Series) -> bool:
     return str(series.dtype) in {"int64", "float64", "Int64", "Float64"}
 
 
-def _missing_issue(col: str, series: pd.Series, sentinel_rows: list[int]) -> QualityIssue | None:
+def _missing_issue(
+    col: str, series: pd.Series, sentinel_rows: list[int], fp: FieldProfile
+) -> QualityIssue | None:
     n = len(series)
     null_rows = series.index[series.isna()].tolist()
     total = len(null_rows) + len(sentinel_rows)
     if total == 0:
         return None
     sample_rows = (null_rows + sentinel_rows)[:5]
-    # 确定性建议：数值列缺失建议均值填充（对聚合影响中性）；
-    # 文本/分类列缺失无法归属，建议删除相关行（用户可改为填充指定值或保留）。
-    if _is_numeric_series(series):
-        suggested, basis = "fill_mean", "数值列缺失，均值填充对总量/均值聚合影响最小"
+    # T02：默认一律保留缺失行，绝不默认填均值/删行——
+    # 数值指标缺失被填充会伪造经营总量；分类缺失可由用户显式归入「未知」桶。
+    if fp.semantic_type == SemanticType.metric:
+        spec = effective_metric_spec(fp)
+        agg = spec.aggregation if spec else "sum"
+        suggested = "keep"
+        basis = (
+            f"指标列缺失默认保留：聚合（{agg}）时空值不计入，"
+            "避免插补值混入真实经营总量；如需填充请显式选择并关注口径影响"
+        )
     else:
-        suggested, basis = "drop_rows", "分类/文本列缺失无法归因到任何维度，建议删除相关行"
+        suggested = "keep"
+        basis = (
+            "分类/文本列缺失默认保留；可显式归入「未知」桶（fill_unknown），"
+            "归入后该桶占比即缺失覆盖率，分析时需明示"
+        )
     return QualityIssue(
         issue_id=f"missing:{col}",
         type=IssueType.missing,
@@ -196,33 +209,42 @@ def iqr_mask(numeric: pd.Series):
 
 
 def _outlier_suggestion(
-    numeric: pd.Series, mask: pd.Series, lo: float, hi: float
+    numeric: pd.Series, mask: pd.Series, lo: float, hi: float,
+    *, allowed_negative: bool,
 ) -> tuple[str, str]:
-    """按极端程度/占比/取值域给出确定性的处理建议。
+    """按极端程度/占比给出确定性的处理建议（T02：保护业务合法极端值）。
 
-    - 正常值全部非负而离群值为负（违反取值域，如负库存）→ 排除；
-    - 离群值超过上界 12 倍（极端录入错误）→ 排除；
-    - 超过上界 2 倍但占比 <5%（孤立峰值）→ 标记保留；
-    - 其余（轻微越界或占比较高的偏态厚尾）→ 保留。
+    铁律：分布证据**永远不充分到可以删行**。IQR 离群默认标记保留；
+    是否「违反取值域」只能来自明确字段业务约束（MetricSpec.allowed_negative），
+    不能从「正常值恰好都非负」推断——-1000 的亏损单与负库存长得一样。
+    本函数因此只返回 keep / mark；exclude 必须由用户基于业务约束显式选择。
     """
     valid = pd.to_numeric(numeric, errors="coerce").dropna()
     out = valid[mask.reindex(valid.index, fill_value=False)]
-    normal = valid[~mask.reindex(valid.index, fill_value=False)]
-    if len(out) == 0 or len(normal) == 0:
+    if len(out) == 0:
         return "keep", "证据不足，默认保留"
     share = len(out) / len(valid)
-    out_min, out_max = float(out.min()), float(out.max())
-    normal_min = float(normal.min())
-    if out_min < 0 and lo < 0 and out_min < lo and normal_min >= 0:
-        return "exclude", "离群值为负数而正常值全部非负，违反取值域，建议排除"
-    if hi > 0 and out_max / hi >= 12:
-        return "exclude", f"最大值约为上界的 {out_max / hi:.0f} 倍，属于极端异常值，建议排除"
-    if hi > 0 and out_max / hi >= 2 and share < 0.05:
-        return "mark", f"超出上界但占比仅 {share:.1%}，建议标记保留以便识别"
-    return "keep", f"越界幅度有限或离群占比 {share:.1%}（偏态厚尾），倾向真实波动，建议保留"
+    out_min = float(out.min())
+    if out_min < 0 and not allowed_negative:
+        return (
+            "mark",
+            f"负值离群（占比 {share:.1%}）疑似录入错误或真实异常（如负库存），"
+            "但仅凭分布无法判定，建议先标记并结合业务约束人工确认，不自动删除",
+        )
+    if out_min < 0 and allowed_negative:
+        return (
+            "mark",
+            f"该指标业务允许负值（如亏损），负离群（占比 {share:.1%}）默认标记保留，"
+            "不得作为录入错误排除",
+        )
+    if share < 0.05:
+        return "mark", f"孤立离群点占比仅 {share:.1%}，建议标记保留以便识别，不删除"
+    return "keep", f"离群占比 {share:.1%}（偏态厚尾），倾向真实业务波动，建议保留"
 
 
-def _outlier_issue(col: str, numeric: pd.Series) -> QualityIssue | None:
+def _outlier_issue(
+    col: str, numeric: pd.Series, fp: FieldProfile
+) -> QualityIssue | None:
     result = iqr_mask(numeric)
     if result is None:
         return None
@@ -230,9 +252,13 @@ def _outlier_issue(col: str, numeric: pd.Series) -> QualityIssue | None:
     count = int(mask.sum())
     if count == 0 or count / len(numeric.dropna()) > 0.15:
         return None
+    spec = effective_metric_spec(fp)
+    allowed_negative = bool(spec and spec.allowed_negative)
     rows = numeric.index[mask].tolist()[:5]
     values = [float(v) for v in numeric[mask].head(5)]
-    suggested, basis = _outlier_suggestion(numeric, mask, float(lo), float(hi))
+    suggested, basis = _outlier_suggestion(
+        numeric, mask, float(lo), float(hi), allowed_negative=allowed_negative
+    )
     return QualityIssue(
         issue_id=f"outlier:{col}",
         type=IssueType.outlier,
@@ -262,7 +288,7 @@ def run_checks(df: pd.DataFrame, dictionary: DataDictionary) -> list[QualityIssu
         s = df[name]
         # 缺失（含哨兵计数）
         sentinel = _sentinel_rows(s) if fp.semantic_type == SemanticType.metric else []
-        mi = _missing_issue(name, s, sentinel)
+        mi = _missing_issue(name, s, sentinel, fp)
         if mi:
             issues.append(mi)
         # 格式类
@@ -281,11 +307,12 @@ def run_checks(df: pd.DataFrame, dictionary: DataDictionary) -> list[QualityIssu
             if sentinel:
                 numeric = numeric.copy()
                 numeric.loc[sentinel] = pd.NA
-            oi = _outlier_issue(name, numeric)
+            oi = _outlier_issue(name, numeric, fp)
             if oi:
                 issues.append(oi)
 
-    # 完全重复行
+    # 完全重复行（T02）：重复 ≠ 错误。交易粒度下整行重复可能只是两笔相同的
+    # 合法交易；默认保留，只有结合业务键（订单号等）与数据粒度确认后才去重。
     dup_mask = df.duplicated(keep="first")
     dup_count = int(dup_mask.sum())
     if dup_count:
@@ -293,14 +320,18 @@ def run_checks(df: pd.DataFrame, dictionary: DataDictionary) -> list[QualityIssu
             QualityIssue(
                 issue_id="duplicate:rows",
                 type=IssueType.duplicate,
-                title=f"检测到 {dup_count} 行完全重复记录",
+                title=f"检测到 {dup_count} 行完全重复记录（可能是合法重复交易）",
                 severity=IssueSeverity.medium if dup_count / len(df) < 0.05 else IssueSeverity.high,
                 evidence={
                     "extra_rows": dup_count,
                     "ratio": round(dup_count / len(df), 4),
                     "sample_rows": [int(i) for i in df.index[dup_mask][:5]],
+                    "suggestion_basis": (
+                        "整行重复不能单独判定为错误：请结合订单号等业务键与数据粒度"
+                        "（是否一行一交易）确认；未确认前默认保留，避免删除真实交易"
+                    ),
                 },
-                suggested_action="drop_duplicates",
+                suggested_action="keep",
                 available_actions=ACTIONS[IssueType.duplicate],
             )
         )

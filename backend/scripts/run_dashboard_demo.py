@@ -46,10 +46,15 @@ def _prepare(store: SessionStore, path: Path) -> tuple[str, int]:
     if pending:
         confirm_fields(sid, pending, store)
 
+    # T02：演示路径只转格式，缺失/离群/重复默认保留，不伪装用户确认
+    from app.services.quality_actions import safe_demo_decisions
     report = run_quality_checks(sid, store)
-    decisions = {i.issue_id: {"action": i.suggested_action} for i in report.issues}
+    decisions = safe_demo_decisions(report)
     report = apply_decisions(sid, decisions, store)
-    print(f"质量处理：{len(decisions)} 个问题已按建议处理；快照 {report.snapshot_rows} 行\n")
+    print(
+        f"质量处理：{len(decisions)} 个问题按安全默认处理（仅格式转换，其余保留）；"
+        f"快照 {report.snapshot_rows} 行\n"
+    )
     return sid, report.snapshot_rows
 
 
@@ -71,7 +76,7 @@ def main(path: str) -> None:
     artifact = synthesize_dashboard(sid, store)
 
     print("="  * 72)
-    print("DashboardArtifact JSON（完整落盘：bundle/dashboard.json）")
+    print("DashboardArtifact JSON（完整落盘：bundle/runs/{run_id}/dashboard.json）")
     print("=" * 72)
     print(json.dumps(artifact.model_dump(mode="json"), ensure_ascii=False, indent=2))
 
@@ -83,8 +88,19 @@ def main(path: str) -> None:
             f"{k.value * 100:.2f}%" if k.unit == "%" else f"{k.value:,.2f}"
         )
         chg = ""
+        # T05：变化口径与引擎一致——正基数才有增长率，其余给差额/状态提示
         if k.change is not None:
-            chg = f"｜环比 {k.change * 100:+.1f}%（{k.change_type}）"
+            chg += f"｜环比 {k.change * 100:+.1f}%"
+        if k.change_delta is not None:
+            delta_txt = (
+                f"{k.change_delta * 100:+.2f}pp" if k.unit == "%"
+                else f"{k.change_delta:+,.2f}"
+            )
+            chg += f"，差额 {delta_txt}"
+        if k.change_status:
+            chg += f"（{k.change_status}）"
+        if k.change_hint:
+            chg += f" · {k.change_hint}"
         print(f"  ■ {k.label}：{val}{chg}")
 
     print("\n" + "=" * 72)
@@ -141,10 +157,12 @@ def main(path: str) -> None:
         print(f"  ■ {f.label}：{len(f.members)} 个成员 → {', '.join(f.members[:8])}"
               f"{' …' if len(f.members) > 8 else ''}")
 
-    probe_root = store.bundle_dir(sid) / "probes"
+    run_dir = store.active_run_dir(sid)
+    probe_root = run_dir / "probes"
     probes = [p for p in probe_root.iterdir()] if probe_root.exists() else []
-    print(f"\n探针：{len(probes)} 个（上限 3）→ {probe_root}")
-    print(f"产物目录：{store.bundle_dir(sid)}")
+    print(f"\n运行版本：{artifact.run_id}")
+    print(f"探针：{len(probes)} 个（上限 3）→ {probe_root}")
+    print(f"产物目录：{run_dir}")
 
 
 if __name__ == "__main__":

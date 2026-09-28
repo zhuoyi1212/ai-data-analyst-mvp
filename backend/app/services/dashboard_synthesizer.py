@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,7 @@ from app.schemas.bundle import (
     AnalysisBundle,
     AnalysisView,
     BundleExecutionResult,
+    ViewExecutionResult,
     ViewStatus,
     ViewType,
 )
@@ -32,8 +34,10 @@ from app.schemas.dashboard import (
 from app.schemas.dictionary import DataDictionary
 from app.services.derived_metrics import detect_derived_metrics
 from app.services.executor import execute_plan
+from app.services.metric_spec import effective_metric_spec
 from app.services.offline_fallback import build_plan
-from app.services.storage import SessionStore
+from app.services.period_compare import PeriodCompareError, period_comparison
+from app.services.storage import SessionStore, StaleRunError
 
 MAX_PROBES = 3
 
@@ -66,7 +70,7 @@ class ProbeResult:
 
 
 class ProbeRunner:
-    """洞察探针执行器：预算 ≤3，异常全收敛，产物隔离在 bundle/probes/。"""
+    """洞察探针执行器：预算 ≤3，异常全收敛，产物隔离在 runs/{run_id}/probes/。"""
 
     def __init__(self, session_id: str, store: SessionStore, snapshot: pd.DataFrame):
         self.session_id = session_id
@@ -80,6 +84,12 @@ class ProbeRunner:
         self.used += 1
         try:
             df, records, elapsed_ms = execute_plan(self.snapshot, plan)
+            # T04：probe 与 View 同门禁——零行/全空结果不可消费（不拿 None/0 当事实）
+            if df is None or len(df.index) == 0:
+                return None
+            numeric = df.select_dtypes(include=["number"])
+            if len(numeric.columns) and numeric.notna().sum().sum() == 0:
+                return None
             self.store.write_probe_plan(
                 self.session_id, probe_id, plan.model_dump(mode="json")
             )
@@ -87,6 +97,7 @@ class ProbeRunner:
             self.store.write_probe_ledger(self.session_id, probe_id, {
                 "probe_id": probe_id,
                 "elapsed_ms": elapsed_ms,
+                "consumable": True,
                 "steps": [r.model_dump(mode="json") for r in records],
             })
             return ProbeResult(df=df, records=records, elapsed_ms=elapsed_ms)
@@ -102,15 +113,11 @@ def _view_result(store: SessionStore, sid: str, view: AnalysisView) -> pd.DataFr
     )
 
 
-def _tail_change(df: pd.DataFrame) -> float | None:
-    """末两期确定性环比（小数）；末期或次期为空/分母 0 时不造数。"""
-    if len(df) < 2 or "value" not in df.columns:
-        return None
-    last2 = df["value"].tail(2)
-    prev, last = float(last2.iloc[0]), float(last2.iloc[1])
-    if pd.isna(prev) or pd.isna(last) or prev == 0:
-        return None
-    return (last - prev) / abs(prev)
+def consumable_results(
+    execution: BundleExecutionResult,
+) -> dict[str, ViewExecutionResult]:
+    """KPI/Chart/Finding/probe 共享的唯一消费门禁（T04）。"""
+    return {r.view_id: r for r in execution.views if r.consumable}
 
 
 def _build_kpis(
@@ -121,34 +128,55 @@ def _build_kpis(
     execution: BundleExecutionResult,
     dictionary: DataDictionary,
     runner: ProbeRunner,
+    snapshot: pd.DataFrame,
 ) -> list[KPI]:
-    success = {
-        r.view_id: r for r in execution.views if r.status == ViewStatus.success
-    }
+    ok = consumable_results(execution)
     overviews = [
         views[vid] for vid in [v.view_id for v in bundle.analysis_views]
-        if vid in views and vid in success and views[vid].type is ViewType.overview
+        if vid in views and vid in ok and views[vid].type is ViewType.overview
     ][:2]
-    trends = [
-        views[vid] for vid in success
-        if views[vid].type is ViewType.trend
-    ]
+    trends = [views[vid] for vid in ok if views[vid].type is ViewType.trend]
+    field_map = {f.name: f for f in dictionary.fields}
 
     kpis: list[KPI] = []
     for v in overviews:
         df = _view_result(store, sid, v)
-        value = float(df["value"].iloc[0]) if len(df) and pd.notna(df["value"].iloc[0]) else None
+        if not len(df) or pd.isna(df["value"].iloc[0]):
+            continue  # T04：无数据不产生 KPI，绝不显示 0
+        value = float(df["value"].iloc[0])
         metric = v.metric_fields[0] if v.metric_fields else v.title
-        change = change_type = None
+        spec = effective_metric_spec(field_map.get(metric)) if metric in field_map else None
+        is_rate = bool(spec and not spec.additive and (spec.unit == "%" or spec.denominator))
+        change = change_type = delta = status = hint = None
         tv = next((t for t in trends if t.metric_fields and t.metric_fields[0] == metric), None)
         if tv is not None:
-            tdf = _view_result(store, sid, tv)
-            change = _tail_change(tdf)
-            gran = tv.plan.steps[-1].params.granularity.value
-            change_type = _GRAN_CHANGE.get(gran)
+            # T05：在快照上走等长窗口同环比，残缺月用 MTD 对齐，
+            # 不直接比较趋势图最后两个（可能残缺的）聚合桶。
+            tparams = tv.plan.steps[-1].params
+            gran = tparams.granularity.value
+            mode = {"month": "mom", "week": "wow", "year": "yoy"}.get(gran, "mom")
+            try:
+                pc = period_comparison(
+                    snapshot, tparams.date_column, metric,
+                    tparams.func.value, mode, is_rate=is_rate,
+                )
+            except PeriodCompareError:
+                pc = None
+            if pc is not None:
+                change = (
+                    pc["growth_pct"] / 100.0
+                    if pc["growth_pct"] is not None else None
+                )
+                delta = pc["delta"]
+                status = pc.get("status") or ""
+                change_type = _GRAN_CHANGE.get(gran)
+                if pc["completeness"] != "complete":
+                    hint = "当期未结束，按截至日等长窗口比较"
         kpis.append(KPI(
             label=metric, value=value,
-            change=change, change_type=change_type, unit="",
+            change=change, change_type=change_type,
+            change_delta=delta, change_status=status or "",
+            change_hint=hint or "", unit="",
         ))
 
     # 派生比率 KPI（第一版：利润率）——无轴单值 probe，口径 Σnum/Σden
@@ -164,7 +192,10 @@ def _build_kpis(
         if probe is not None and len(probe.df) and "value" in probe.df.columns:
             raw = probe.df["value"].iloc[0]
             ratio = float(raw) if pd.notna(raw) else None
-        kpis.append(KPI(label=spec.label, value=ratio, unit=spec.unit))
+        kpis.append(KPI(
+            label=spec.label, value=ratio, unit=spec.unit,
+            change_status="" if ratio is not None else "分母为零，不可计算",
+        ))
 
     return kpis
 
@@ -178,9 +209,11 @@ def build_chart_spec(view: AnalysisView) -> ChartSpec | None:
     if op in ("aggregate",):
         return None
     if op == "time_series":
+        # 反例 3 修复：time_series 算子实际输出列为 {日期列, value}，
+        # ChartSpec 必须命中输出 schema，不能写指标原名。
         return ChartSpec(
             type=view.chart, title=view.title,
-            x_field=p.date_column, y_fields=[p.metric], metric=p.metric,
+            x_field=p.date_column, y_fields=["value"], metric=p.metric,
         )
     if op in ("group_by", "top_n"):
         return ChartSpec(
@@ -250,44 +283,88 @@ def _build_filters(
 
 # ----------------------------------------------------------------- 主编排
 
+def _verify_run_fingerprints(session_id: str, store: SessionStore):
+    """T01：合成前校验运行版本与当前快照/字典/执行结果一致，错配即 stale。
+
+    禁止只判文件是否存在——快照被重做、字典口径变更、Bundle 重规划都会使
+    旧执行结果成为错误版本。
+    """
+    manifest = store.run_manifest(session_id)
+    session_dir = store.session_dir(session_id)
+    snap_path = session_dir / "snapshot.parquet"
+    dict_path = session_dir / "dictionary.json"
+    actual_snapshot = hashlib.sha256(snap_path.read_bytes()).hexdigest()
+    if actual_snapshot != manifest.snapshot_hash:
+        raise StaleRunError(
+            "数据快照已变化，旧执行结果与当前数据不是同一版本，请重新生成并执行分析蓝图。"
+        )
+    actual_dict = hashlib.sha256(dict_path.read_bytes()).hexdigest()
+    if actual_dict != manifest.dictionary_hash:
+        raise StaleRunError(
+            "语义字典/指标口径已变化，旧执行结果失效，请重新生成并执行分析蓝图。"
+        )
+    if not (store.run_dir(session_id, manifest.run_id) / "execution.json").exists():
+        raise StaleRunError("当前分析蓝图尚未执行，请先执行后再合成仪表盘。")
+    return manifest
+
+
 def synthesize_dashboard(
     session_id: str,
     store: SessionStore,
     *,
     findings: list | None = None,
 ) -> DashboardArtifact:
-    """读取 Bundle + 执行结果 → 合成并落盘 DashboardArtifact。
+    """读取当前运行的 Bundle + 执行结果 → 合成并原子发布 DashboardArtifact。
 
-    findings 可由 dashboard_insight 在外部预算内注入；默认不产出（Step 7 接入）。
+    - 同运行重复合成幂等：已发布则直接读回，不重置 probe 预算（T01）；
+    - 版本指纹不匹配一律 StaleRunError（路由映射 409），不混版本（T01）；
+    - KPI/Chart/Finding 共享 consumable 门禁（T04）；
+    - findings 可由外部在预算内注入；默认走 detect_findings。
     """
     # 延迟导入避免模块循环
     from app.services.dashboard_insight import detect_findings
 
-    bundle = AnalysisBundle.model_validate(store.read_bundle(session_id))
+    manifest = _verify_run_fingerprints(session_id, store)
+    run_id = manifest.run_id
+
+    # 幂等：同一运行已发布过的仪表盘直接读回（probe 预算/证据全部保留）
+    published_path = store.run_dir(session_id, run_id) / "dashboard.json"
+    if published_path.exists():
+        return DashboardArtifact.model_validate(
+            store.read_dashboard(session_id, run_id=run_id)
+        )
+
+    bundle = AnalysisBundle.model_validate(
+        store.read_bundle(session_id, run_id=run_id)
+    )
     execution = BundleExecutionResult.model_validate(
         store.read_bundle_execution(session_id)
     )
+    if execution.run_id and execution.run_id != run_id:
+        raise StaleRunError("执行结果属于其他运行版本，请重新执行当前分析蓝图。")
     dictionary = DataDictionary.model_validate(
         store.read_artifact(session_id, "dictionary")
     )
     snapshot = store.load_snapshot(session_id)
     views = {v.view_id: v for v in bundle.analysis_views}
-    success_ids = {
-        r.view_id for r in execution.views if r.status == ViewStatus.success
-    }
+    # T04：只有 status=success 且结果有效（pass/warn）才可进入仪表盘
+    consumable_ids = set(consumable_results(execution).keys())
 
     runner = ProbeRunner(session_id, store, snapshot)
-    kpis = _build_kpis(session_id, store, bundle, views, execution, dictionary, runner)
+    kpis = _build_kpis(
+        session_id, store, bundle, views, execution, dictionary, runner,
+        snapshot,
+    )
 
     # ChartSpec 随 view 级目录落盘（artifact 只持有 view_id 索引）
-    for vid in success_ids:
+    for vid in consumable_ids:
         spec = build_chart_spec(views[vid])
         if spec is not None:
             store.write_view_chart_spec(
                 session_id, vid, spec.model_dump(mode="json")
             )
 
-    sections = _build_sections(bundle, success_ids)
+    sections = _build_sections(bundle, consumable_ids)
     filters = _build_filters(bundle, dictionary, snapshot)
 
     if findings is None:
@@ -297,6 +374,7 @@ def synthesize_dashboard(
     risks = [f for f in findings if f.type == "risk"]
 
     artifact = DashboardArtifact(
+        run_id=run_id,
         bundle_id=bundle.bundle_id,
         title=bundle.title,
         kpis=kpis,
@@ -305,5 +383,8 @@ def synthesize_dashboard(
         risks=risks,
         global_filters=filters,
     )
-    store.write_dashboard(session_id, artifact.model_dump(mode="json"))
+    # expected_run_id：迟到的合成响应若发现 active 已前进，绝不回切 current
+    store.write_dashboard(
+        session_id, artifact.model_dump(mode="json"), expected_run_id=run_id
+    )
     return artifact

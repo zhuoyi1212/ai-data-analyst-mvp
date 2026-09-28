@@ -38,10 +38,21 @@ def _snapshot_hash(snap_path: Path) -> str:
     return hashlib.sha256(snap_path.read_bytes()).hexdigest()
 
 
-def _checks(result: pd.DataFrame, participating_rows: int) -> list[ViewValidationItem]:
+def _participating_rows(records, snapshot_rows: int) -> int:
+    """进入末端计算的行数：取最后一个 filter 的输出；无筛选即整张快照。"""
+    filters = [r for r in records if r.op == "filter"]
+    if filters:
+        return int(filters[-1].output_rows)
+    return int(records[-1].input_rows) if records else snapshot_rows
+
+
+def _checks(
+    view: AnalysisView, result: pd.DataFrame, participating_rows: int
+) -> list[ViewValidationItem]:
     checks: list[ViewValidationItem] = []
 
-    # coverage：进入末端计算的行数与输出行数都必须 > 0
+    # coverage（T04）：执行成功 ≠ 结果有效。零行是 no_data 而非 fail，
+    # 但两者都不可消费；展示层必须显示「无数据」，严禁把 KPI 当 0。
     if participating_rows > 0 and len(result.index) > 0:
         checks.append(ViewValidationItem(
             code="coverage", level="pass",
@@ -51,17 +62,21 @@ def _checks(result: pd.DataFrame, participating_rows: int) -> list[ViewValidatio
         ))
     else:
         checks.append(ViewValidationItem(
-            code="coverage", level="fail",
-            detail=f"无有效输出（参与 {participating_rows} 行，输出 {len(result.index)} 行）",
+            code="coverage", level="no_data",
+            detail=(
+                f"筛选后无有效数据（参与 {participating_rows} 行，"
+                f"输出 {len(result.index)} 行），该视角不进入仪表盘，也不显示为 0"
+            ),
             numbers={"participating_rows": participating_rows,
                      "result_rows": len(result.index)},
         ))
 
-    # shape：数值列不允许全 NaN / Inf
+    # shape：数值列不允许全 NaN / Inf（零分母产生的 null 是「不可计算」，
+    # 由 null_handling 单独计数，不算非法结构）
     numeric = result.select_dtypes(include=[np.number])
     bad_cols = [
         str(c) for c in numeric.columns
-        if numeric[c].isna().all() or np.isinf(numeric[c].dropna()).any()
+        if len(numeric[c].dropna()) == 0 or np.isinf(numeric[c].dropna()).any()
     ]
     if bad_cols:
         checks.append(ViewValidationItem(
@@ -85,13 +100,29 @@ def _checks(result: pd.DataFrame, participating_rows: int) -> list[ViewValidatio
     if null_counts:
         checks.append(ViewValidationItem(
             code="null_handling", level="warn",
-            detail="结果中存在空值，展示与洞察需注意",
+            detail="结果中存在空值（可能为分母为 0 的「不可计算」），展示需明示",
             numbers={"null_counts": null_counts},
         ))
     else:
         checks.append(ViewValidationItem(
             code="null_handling", level="pass", detail="结果无空值", numbers={},
         ))
+
+    # reconciliation（T04）：份额回总必须 ≈1，否则说明口径/过滤不一致
+    if "share" in result.columns and pd.api.types.is_numeric_dtype(result["share"]):
+        share_sum = float(result["share"].sum())
+        if np.isnan(share_sum) or abs(share_sum - 1.0) > 1e-6:
+            checks.append(ViewValidationItem(
+                code="reconciliation", level="warn",
+                detail=f"各分组份额合计为 {share_sum:.6f}，不等于 100%，请核口径",
+                numbers={"share_sum": share_sum},
+            ))
+        else:
+            checks.append(ViewValidationItem(
+                code="reconciliation", level="pass",
+                detail="各分组份额合计为 100%，与总体回总一致",
+                numbers={"share_sum": share_sum},
+            ))
     return checks
 
 
@@ -135,8 +166,8 @@ def _execute_one(
             snapshot_rows=snapshot_rows,
         )
 
-    participating_rows = records[-1].input_rows if records else snapshot_rows
-    checks = _checks(result, participating_rows)
+    participating_rows = _participating_rows(records, snapshot_rows)
+    checks = _checks(view, result, participating_rows)
 
     # 落盘：结果 parquet + 台账 + 校验（写盘失败同样收敛为 failed）
     try:
@@ -196,11 +227,23 @@ def execute_bundle(
     if snap_hash != actual_hash:
         raise ValueError("数据快照与质量处理记录不一致，请重新完成数据质量处理。")
 
+    # T01：执行必须锚定当前运行版本；Bundle 身份/快照指纹任一不符即拒
+    manifest = store.run_manifest(session_id)
+    if bundle.bundle_id != manifest.bundle_id:
+        from app.services.storage import StaleRunError
+        raise StaleRunError(
+            "要执行的分析蓝图不是当前运行版本，请重新生成并执行 AnalysisBundle。"
+        )
+    if manifest.snapshot_hash != actual_hash:
+        from app.services.storage import StaleRunError
+        raise StaleRunError("数据快照已变更，当前分析运行失效，请重新生成分析蓝图。")
+
     results = [
         _execute_one(session_id, store, view, snapshot, len(snapshot.index), snap_hash)
         for view in bundle.analysis_views
     ]
     summary = BundleExecutionResult(
+        run_id=manifest.run_id,
         bundle_id=bundle.bundle_id,
         total=len(results),
         succeeded=sum(1 for r in results if r.status == ViewStatus.success),

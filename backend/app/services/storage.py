@@ -1,7 +1,19 @@
-"""文件型会话存储：所有阶段产物以可检视文件落盘（FR-12）。"""
+"""文件型会话存储：所有阶段产物以可检视文件落盘（FR-12）。
+
+P0 T01 起，Bundle 链路产物按「运行版本」隔离：
+    bundle/
+      runs/{run_id}/manifest.json | bundle.json | execution.json | dashboard.json
+      runs/{run_id}/views/{view_id}/...
+      runs/{run_id}/probes/{probe_id}/...
+      active.json   工作流最新运行（规划/执行/发布均更新）
+      current.json  最近一次已发布的完整版本（消费端只认该指针）
+旧运行目录永久保留可读；current 与 active 不一致时读取方必须按 stale 处理。
+"""
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -11,6 +23,7 @@ from typing import Any
 import pandas as pd
 
 from app.config import settings
+from app.schemas.run import RunManifest, RunPointer, RunStatus
 from app.services.parser import ParsedTable, normalize_mixed_columns, parse_table
 
 # 工作流阶段（顺序即状态机顺序）
@@ -34,6 +47,10 @@ def _now() -> str:
 
 class StorageError(KeyError):
     pass
+
+
+class StaleRunError(Exception):
+    """下游产物与当前运行版本/口径不匹配（HTTP 层映射为 409）。"""
 
 
 class SessionStore:
@@ -144,54 +161,222 @@ class SessionStore:
     def copy_sample_into(self, src: Path, session_id: str, filename: str) -> None:
         shutil.copy(src, self.session_dir(session_id) / filename)
 
-    # ---- AnalysisBundle（视图级隔离，不与单 plan 槽位冲突） ----
+    # ---- AnalysisBundle：运行版本化存储（P0 T01） ----
     def bundle_dir(self, session_id: str) -> Path:
         return self.session_dir(session_id) / "bundle"
 
-    def write_bundle(self, session_id: str, payload: Any) -> Path:
+    def _runs_dir(self, session_id: str) -> Path:
+        return self.bundle_dir(session_id) / "runs"
+
+    def _pointer_path(self, session_id: str, name: str) -> Path:
+        return self.bundle_dir(session_id) / f"{name}.json"
+
+    def _read_pointer(self, session_id: str, name: str) -> dict[str, Any] | None:
+        path = self._pointer_path(session_id, name)
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _write_pointer_atomic(
+        self, session_id: str, name: str, pointer: RunPointer
+    ) -> None:
+        """指针发布必须原子替换：迟到响应只能整体成功或整体不可见。"""
         d = self.bundle_dir(session_id)
         d.mkdir(parents=True, exist_ok=True)
-        path = d / "bundle.json"
+        tmp = d / f".{name}.tmp"
+        tmp.write_text(
+            json.dumps(pointer.model_dump(mode="json"),
+                       ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        os.replace(tmp, self._pointer_path(session_id, name))
+
+    def active_run_id(self, session_id: str) -> str | None:
+        p = self._read_pointer(session_id, "active")
+        return p["run_id"] if p else None
+
+    def current_run_id(self, session_id: str) -> str | None:
+        p = self._read_pointer(session_id, "current")
+        return p["run_id"] if p else None
+
+    def is_dashboard_stale(self, session_id: str) -> bool:
+        """current（已发布）存在但不等于 active（最新工作流运行）即陈旧。"""
+        cur, act = self.current_run_id(session_id), self.active_run_id(session_id)
+        return cur is not None and act is not None and cur != act
+
+    def run_dir(self, session_id: str, run_id: str) -> Path:
+        safe = Path(run_id).name
+        if safe != run_id or not safe:
+            raise StorageError(f"非法的运行标识：{run_id}")
+        d = self._runs_dir(session_id) / safe
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def active_run_dir(self, session_id: str) -> Path:
+        run_id = self.active_run_id(session_id)
+        if run_id is None:
+            raise StorageError("尚未生成分析蓝图（AnalysisBundle）。")
+        return self.run_dir(session_id, run_id)
+
+    def current_run_dir(self, session_id: str) -> Path:
+        run_id = self.current_run_id(session_id)
+        if run_id is None:
+            raise StorageError("尚未发布仪表盘（DashboardArtifact）。")
+        return self.run_dir(session_id, run_id)
+
+    def run_manifest(
+        self, session_id: str, run_id: str | None = None
+    ) -> RunManifest:
+        rid = run_id or self.active_run_id(session_id)
+        if rid is None:
+            raise StorageError("尚未生成分析蓝图（AnalysisBundle）。")
+        path = self._runs_dir(session_id) / rid / "manifest.json"
+        if not path.exists():
+            raise StorageError(f"运行版本清单不存在：{rid}")
+        return RunManifest.model_validate(
+            json.loads(path.read_text(encoding="utf-8"))
+        )
+
+    def _update_manifest(
+        self, session_id: str, run_id: str, **changes: Any
+    ) -> RunManifest:
+        rd = self.run_dir(session_id, run_id)
+        manifest = self.run_manifest(session_id, run_id)
+        updated = manifest.model_copy(update=changes)
+        (rd / "manifest.json").write_text(
+            json.dumps(updated.model_dump(mode="json"),
+                       ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        return updated
+
+    @staticmethod
+    def _sha256_bytes(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    @staticmethod
+    def _canonical_sha(payload: Any) -> str:
+        body = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), default=_json_default,
+        ).encode("utf-8")
+        return hashlib.sha256(body).hexdigest()
+
+    def write_bundle(
+        self,
+        session_id: str,
+        payload: Any,
+        *,
+        scope_filters: list[dict[str, Any]] | None = None,
+    ) -> Path:
+        """规划新运行：分配 run_id、固化口径指纹并切换 active 指针。
+
+        旧运行目录原样保留（可读、可审计），但立即不再是工作流当前版本。
+        T06：scope_filters（全局筛选）固化进 manifest 并参与 scope_hash；
+        空筛选时 scope_hash 等于 snapshot_hash（与 P0 行为一致）。
+        """
+        session_dir = self.session_dir(session_id)
+        quality = self.read_artifact(session_id, "quality")
+        snapshot_hash = quality["snapshot_hash"]
+        dict_path = session_dir / "dictionary.json"
+        dictionary_hash = self._sha256_file(dict_path)
+        scope_filters = scope_filters or []
+        if scope_filters:
+            scope_hash = self._canonical_sha(
+                {"snapshot": snapshot_hash, "filters": scope_filters}
+            )
+        else:
+            scope_hash = snapshot_hash  # 无全局筛选，范围即整张快照
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        rd = self.run_dir(session_id, run_id)
+
+        path = rd / "bundle.json"
         path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
             encoding="utf-8",
         )
+        plan_hash = self._sha256_file(path)
+        manifest = RunManifest(
+            run_id=run_id,
+            bundle_id=payload["bundle_id"],
+            status=RunStatus.planned,
+            snapshot_hash=snapshot_hash,
+            dictionary_hash=dictionary_hash,
+            scope_hash=scope_hash,
+            plan_hash=plan_hash,
+            scope=scope_filters,
+            created_at=_now(),
+        )
+        (rd / "manifest.json").write_text(
+            json.dumps(manifest.model_dump(mode="json"),
+                       ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        self._write_pointer_atomic(session_id, "active", RunPointer(
+            run_id=run_id, bundle_id=payload["bundle_id"], updated_at=_now(),
+        ))
         return path
 
-    def read_bundle(self, session_id: str) -> Any:
-        path = self.bundle_dir(session_id) / "bundle.json"
+    def read_bundle(self, session_id: str, run_id: str | None = None) -> Any:
+        if run_id is not None:
+            path = self.run_dir(session_id, run_id) / "bundle.json"
+        else:
+            rid = self.active_run_id(session_id)
+            if rid is None:
+                raise StorageError("尚未生成分析蓝图（AnalysisBundle）。")
+            path = self.run_dir(session_id, rid) / "bundle.json"
         if not path.exists():
-            raise StorageError("尚未生成分析蓝图（AnalysisBundle）。")
+            raise StorageError("分析蓝图文件缺失，请重新生成 AnalysisBundle。")
         return json.loads(path.read_text(encoding="utf-8"))
 
     def has_bundle(self, session_id: str) -> bool:
-        return (self.bundle_dir(session_id) / "bundle.json").exists()
+        rid = self.active_run_id(session_id)
+        return rid is not None and (
+            self._runs_dir(session_id) / rid / "bundle.json"
+        ).exists()
 
     def write_bundle_execution(self, session_id: str, payload: Any) -> Path:
-        d = self.bundle_dir(session_id)
-        d.mkdir(parents=True, exist_ok=True)
-        path = d / "execution.json"
+        run_id = self.active_run_id(session_id)
+        if run_id is None:
+            raise StorageError("尚未生成分析蓝图（AnalysisBundle）。")
+        manifest = self.run_manifest(session_id, run_id)
+        if payload["bundle_id"] != manifest.bundle_id:
+            raise StaleRunError(
+                "执行结果与当前运行的 Bundle 不一致，请重新执行当前分析蓝图。"
+            )
+        path = self.run_dir(session_id, run_id) / "execution.json"
         path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
             encoding="utf-8",
         )
+        self._update_manifest(session_id, run_id, status=RunStatus.executed)
         return path
 
     def read_bundle_execution(self, session_id: str) -> Any:
-        path = self.bundle_dir(session_id) / "execution.json"
+        rid = self.active_run_id(session_id)
+        if rid is None:
+            raise StorageError("分析蓝图尚未执行。")
+        path = self.run_dir(session_id, rid) / "execution.json"
         if not path.exists():
             raise StorageError("分析蓝图尚未执行。")
         return json.loads(path.read_text(encoding="utf-8"))
 
     def has_bundle_execution(self, session_id: str) -> bool:
-        return (self.bundle_dir(session_id) / "execution.json").exists()
+        rid = self.active_run_id(session_id)
+        return rid is not None and (
+            self._runs_dir(session_id) / rid / "execution.json"
+        ).exists()
 
     def view_dir(self, session_id: str, view_id: str) -> Path:
         # view_id 来自受控的规则生成（view_ 前缀），仍做路径安全防护
         safe = Path(view_id).name
         if safe != view_id or not safe:
             raise StorageError(f"非法的视图标识：{view_id}")
-        d = self.bundle_dir(session_id) / "views" / safe
+        d = self.active_run_dir(session_id) / "views" / safe
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -225,32 +410,57 @@ class SessionStore:
         )
         return path
 
-    # ---- DashboardArtifact（Phase 2，与 view 槽位隔离） ----
-    def write_dashboard(self, session_id: str, payload: Any) -> Path:
-        d = self.bundle_dir(session_id)
-        d.mkdir(parents=True, exist_ok=True)
-        path = d / "dashboard.json"
+    # ---- DashboardArtifact：只发布完整版本，指针原子切换 ----
+    def write_dashboard(
+        self, session_id: str, payload: Any, *, expected_run_id: str | None = None
+    ) -> Path:
+        run_id = self.active_run_id(session_id)
+        if run_id is None:
+            raise StorageError("尚未生成分析蓝图（AnalysisBundle）。")
+        # 迟到响应防护：合成开始后若 active 已切到更新的运行，本次只落历史文件，
+        # 绝不回切 current 指针。
+        if expected_run_id is not None and run_id != expected_run_id:
+            raise StaleRunError(
+                "检测到更新的分析运行，本次合成结果不作为当前仪表盘发布。"
+            )
+        rd = self.run_dir(session_id, run_id)
+        path = rd / "dashboard.json"
         path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
             encoding="utf-8",
         )
+        self._update_manifest(
+            session_id, run_id, status=RunStatus.published, published_at=_now()
+        )
+        self._write_pointer_atomic(session_id, "current", RunPointer(
+            run_id=run_id, bundle_id=payload["bundle_id"], updated_at=_now(),
+        ))
         return path
 
-    def read_dashboard(self, session_id: str) -> Any:
-        path = self.bundle_dir(session_id) / "dashboard.json"
+    def read_dashboard(self, session_id: str, run_id: str | None = None) -> Any:
+        if run_id is not None:
+            path = self.run_dir(session_id, run_id) / "dashboard.json"
+        else:
+            rid = self.current_run_id(session_id)
+            if rid is None:
+                raise StorageError("尚未生成仪表盘（DashboardArtifact）。")
+            path = self.run_dir(session_id, rid) / "dashboard.json"
         if not path.exists():
             raise StorageError("尚未生成仪表盘（DashboardArtifact）。")
         return json.loads(path.read_text(encoding="utf-8"))
 
     def has_dashboard(self, session_id: str) -> bool:
-        return (self.bundle_dir(session_id) / "dashboard.json").exists()
+        rid = self.current_run_id(session_id)
+        return rid is not None and (
+            self._runs_dir(session_id) / rid / "dashboard.json"
+        ).exists()
 
-    # ---- 洞察探针（KPI 比率/下钻，产物隔离在 bundle/probes/） ----
+    # ---- 洞察探针（产物隔离在当前运行的 runs/{id}/probes/） ----
     def probe_dir(self, session_id: str, probe_id: str) -> Path:
         safe = Path(probe_id).name
         if safe != probe_id or not safe:
             raise StorageError(f"非法的探针标识：{probe_id}")
-        d = self.bundle_dir(session_id) / "probes" / safe
+        d = self.active_run_dir(session_id) / "probes" / safe
         d.mkdir(parents=True, exist_ok=True)
         return d
 

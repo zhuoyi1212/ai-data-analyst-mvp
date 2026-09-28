@@ -12,7 +12,7 @@ from app.schemas.bundle import AnalysisBundle
 from app.schemas.dictionary import DataDictionary
 from app.services.bundle_executor import execute_bundle
 from app.services.bundle_planner import build_bundle
-from app.services.storage import SessionStore, StorageError
+from app.services.storage import SessionStore, StaleRunError, StorageError
 
 router = APIRouter(prefix="/sessions/{session_id}", tags=["bundle"])
 
@@ -70,6 +70,8 @@ def run_bundle(session_id: str) -> dict:
     try:
         bundle = AnalysisBundle.model_validate(store.read_bundle(session_id))
         summary = execute_bundle(session_id, store, bundle)
+    except StaleRunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except StorageError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

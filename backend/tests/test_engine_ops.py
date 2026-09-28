@@ -133,16 +133,21 @@ def test_period_compare_growth(sales):
         step_id="s", op="period_compare",
         params=PeriodCompareParams(date_column="日期", period=ComparePeriod.mom,
                                    metric="金额", func=AggFunc.sum)))
+    # T05：as_of=2024-03-25 → 残缺月，按等长 MTD 窗口比较（03-01~25 vs 02-01~25）
     assert r.summary["current_value"] == 370.0
     assert r.summary["previous_value"] == 280.0
     assert r.summary["growth_pct"] == pytest.approx((370 - 280) / 280 * 100)
-    assert r.df["period"].tolist() == ["2024-03", "2024-02"]
+    assert r.summary["completeness"] == "partial"
+    assert r.summary["delta"] == pytest.approx(90.0)
+    assert r.df["period"].tolist() == [
+        "2024-03-01 ~ 2024-03-25（截至日同期）", "2024-02-01 ~ 2024-02-25"
+    ]
 
 
 def test_period_compare_missing_prev_blocked():
     df = pd.DataFrame({"日期": pd.to_datetime(["2024-03-01", "2024-03-10"]),
                        "金额": [1.0, 2.0]})
-    with pytest.raises(EngineError, match="上一周期"):
+    with pytest.raises(EngineError, match="缺少对比期数据"):
         run_step(df, PeriodCompareStep(
             step_id="s", op="period_compare",
             params=PeriodCompareParams(date_column="日期", period=ComparePeriod.mom,

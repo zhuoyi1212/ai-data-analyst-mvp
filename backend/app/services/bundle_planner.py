@@ -695,3 +695,98 @@ def build_bundle(
         primary_dimensions=[d.name for d in dims[:3]],
         analysis_views=views,
     )
+
+
+# ----------------------------------------------------------------- T06 全局筛选
+
+def coerce_filter_values(series: pd.Series, values: list[Any]) -> list[Any]:
+    """把 FilterDefinition 的字符串成员转回列实际类型。
+
+    筛选器成员经 astype(str) 生成；数值列直接拿字符串 isin 会零命中，
+    因此数值列转回数值，无法转换的保留原字符串。
+    """
+    if pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(series):
+        out: list[Any] = []
+        for v in values:
+            num = pd.to_numeric(v, errors="coerce")
+            out.append(num.item() if pd.notna(num) else v)
+        return out
+    return [str(v) for v in values]
+
+
+def normalize_scope(
+    snapshot: pd.DataFrame, scope_filters: list[dict[str, Any]]
+) -> list[tuple[str, list[Any]]]:
+    """固化筛选口径：剔除快照中不存在的列与空 values，并按列实际类型转换。"""
+    out: list[tuple[str, list[Any]]] = []
+    for f in scope_filters:
+        column = str(f.get("column", ""))
+        if not column or column not in snapshot.columns:
+            continue
+        values = [v for v in f.get("values", []) if v is not None and str(v) != ""]
+        if not values:
+            continue
+        out.append((column, coerce_filter_values(snapshot[column], values)))
+    return out
+
+
+def apply_scope_filters(
+    df: pd.DataFrame, norm: list[tuple[str, list[Any]]]
+) -> pd.DataFrame:
+    """在快照/探针数据上裁剪分析范围（与注入 filter 步骤同一口径）。"""
+    out = df
+    for column, values in norm:
+        if column in out.columns:
+            out = out[out[column].isin(values)]
+    return out
+
+
+def refine_bundle(
+    bundle: AnalysisBundle,
+    snapshot: pd.DataFrame,
+    scope_filters: list[dict[str, Any]],
+) -> AnalysisBundle:
+    """全局筛选改变 → 在当前 Bundle 结构上产出新运行版本的 Bundle。
+
+    每个 View 的 Plan 前面插入 in_set filter 步骤（顺序执行即逐层裁剪），
+    原步骤 step_id/depends_on 保持不变（execute_plan 按列表顺序执行，
+    depends_on 仅为说明）。新 bundle_id；view_id 保持稳定——产物按运行
+    目录隔离，不会与旧运行冲突。
+    """
+    from app.schemas.common import FilterOperator
+    from app.schemas.plan import FilterParams, FilterStep
+
+    norm = normalize_scope(snapshot, scope_filters)
+    scope_steps = [
+        FilterStep(
+            step_id=f"s_scope_{i}",
+            op="filter",
+            description=f"全局筛选：{column} ∈ {values}",
+            depends_on=[f"s_scope_{i - 1}"] if i else [],
+            params=FilterParams(
+                column=column, operator=FilterOperator.in_set, value=values
+            ),
+        )
+        for i, (column, values) in enumerate(norm)
+    ]
+
+    new_views: list[AnalysisView] = []
+    for view in bundle.analysis_views:
+        # 先剥离上一次运行注入的 s_scope_* 步骤（链式 refine/清除筛选时，
+        # 否则旧筛选条件会残留在方案里），再插入本次 scope 步骤
+        original_steps = [
+            s for s in view.plan.steps
+            if not str(s.step_id).startswith("s_scope_")
+        ]
+        new_views.append(view.model_copy(update={
+            "plan": view.plan.model_copy(update={
+                "steps": [*scope_steps, *original_steps]
+            })
+        }))
+    return AnalysisBundle(
+        bundle_id=f"bundle_{uuid.uuid4().hex[:12]}",
+        title=bundle.title,
+        primary_metrics=bundle.primary_metrics,
+        primary_dimensions=bundle.primary_dimensions,
+        analysis_views=new_views,
+    )

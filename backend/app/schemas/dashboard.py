@@ -235,6 +235,14 @@ class FailedView(BaseModel):
     reason: str
 
 
+class RefineRequest(BaseModel):
+    """全局筛选重算请求：filters 为空列表 = 回到全量快照范围。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filters: list[AppliedFilter] = Field(default_factory=list)
+
+
 # ----------------------------------------------------------------- Artifact
 
 # ready=至少有一个可消费视图且无失败；partial=有可消费视图但存在失败/不可消费；

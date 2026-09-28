@@ -211,3 +211,143 @@ export interface FollowUpQuestion {
 export interface FollowUpSet {
   questions: FollowUpQuestion[];
 }
+
+// ---------------------------------------------------------------- Dashboard（T06）
+
+export interface ColumnSchema {
+  name: string;
+  dtype: string;
+  label: string;
+}
+
+export interface DataPage {
+  page: number;
+  page_size: number;
+  total_rows: number;
+  total_pages: number;
+}
+
+export interface DataSample {
+  total_count: number;
+  display_count: number;
+  sample_method: string;
+  note: string;
+}
+
+export interface ViewDataEnvelope {
+  kind: string;
+  columns: ColumnSchema[];
+  rows: Record<string, string | number | null>[];
+  page: DataPage | null;
+  sample: DataSample | null;
+  data_ref: string;
+}
+
+export interface ChartSpec {
+  type: string;
+  title: string;
+  x_field: string | null;
+  y_fields: string[];
+  dimension: string | null;
+  metric: string | null;
+  interactive: boolean;
+}
+
+export interface ViewValidationItem {
+  code: string;
+  level: string;
+  detail: string;
+  numbers: Record<string, unknown>;
+}
+
+export interface ViewCard {
+  view_id: string;
+  title: string;
+  question: string;
+  type: string;
+  section_id: string | null;
+  chart_spec: ChartSpec | null;
+  data: ViewDataEnvelope | null;
+  status: string;
+  validity: string;
+  consumable: boolean;
+  reason: string;
+  checks: ViewValidationItem[];
+  metric_label: string;
+}
+
+export interface KPI {
+  label: string;
+  value: number | null;
+  change: number | null;
+  change_type: string | null;
+  change_delta: number | null;
+  change_status: string;
+  change_hint: string;
+  unit: string;
+}
+
+export interface DashboardSection {
+  section_id: string;
+  title: string;
+  view_ids: string[];
+}
+
+export interface FilterDefinition {
+  column: string;
+  label: string;
+  members: string[];
+  selected_values: string[] | null;
+}
+
+export interface AppliedFilter {
+  column: string;
+  values: string[];
+}
+
+export interface DashboardScope {
+  filters: AppliedFilter[];
+  snapshot_rows: number;
+  participating_rows: number;
+}
+
+export interface Finding {
+  finding_id: string;
+  title: string;
+  summary: string;
+  type: string;
+  evidence_view_ids: string[];
+  importance: string;
+  drilldown: unknown | null;
+}
+
+export interface FailedView {
+  view_id: string;
+  title: string;
+  reason: string;
+}
+
+export interface DashboardArtifact {
+  run_id: string;
+  bundle_id: string;
+  title: string;
+  state: string;
+  scope: DashboardScope;
+  kpis: KPI[];
+  sections: DashboardSection[];
+  views: Record<string, ViewCard>;
+  findings: Finding[];
+  risks: Finding[];
+  failed_views: FailedView[];
+  global_filters: FilterDefinition[];
+}
+
+export interface RunSummary {
+  run_id: string;
+  bundle_id: string;
+  status: string;
+  scope: AppliedFilter[];
+  has_dashboard: boolean;
+  created_at: string;
+  published_at: string | null;
+}

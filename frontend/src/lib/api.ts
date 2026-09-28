@@ -2,6 +2,7 @@
 // 所有错误均提取后端中文 detail，绝不在前端伪造任何数据结果。
 
 import type {
+  DashboardArtifact,
   DataDictionary,
   FollowUpSet,
   Insight,
@@ -10,8 +11,10 @@ import type {
   Preview,
   QualityReport,
   RecommendedQuestion,
+  RunSummary,
   SessionMeta,
   ValidationReport,
+  ViewDataEnvelope,
 } from "./types";
 
 const BASE = "/api/backend";
@@ -132,4 +135,27 @@ export const api = {
   generateFollowups: (id: string) =>
     post<FollowUpSet>(`/sessions/${id}/followups/generate`, {}),
   getFollowups: (id: string) => get<FollowUpSet>(`/sessions/${id}/followups`),
+
+  // ---- 自动分析工作台（T06） ----
+  postBundle: (id: string) =>
+    post<unknown>(`/sessions/${id}/analysis-bundle`, {}),
+  executeBundle: (id: string) =>
+    post<unknown>(`/sessions/${id}/analysis-bundle/execute`, {}),
+  postDashboard: (id: string) =>
+    post<DashboardArtifact>(`/sessions/${id}/dashboard`, {}),
+  getDashboard: (id: string) =>
+    get<DashboardArtifact>(`/sessions/${id}/dashboard`),
+  refineDashboard: (
+    id: string,
+    filters: { column: string; values: string[] }[],
+  ) =>
+    post<DashboardArtifact>(`/sessions/${id}/dashboard/refine`, { filters }),
+  listRuns: (id: string) =>
+    get<{ runs: RunSummary[] }>(`/sessions/${id}/runs`),
+  getRunDashboard: (id: string, runId: string) =>
+    get<DashboardArtifact>(`/sessions/${id}/runs/${runId}/dashboard`),
+  getViewRows: (dataRef: string, page: number, pageSize: number) =>
+    get<ViewDataEnvelope>(
+      `${dataRef}?page=${page}&page_size=${pageSize}`,
+    ),
 };

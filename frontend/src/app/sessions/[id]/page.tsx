@@ -93,8 +93,16 @@ export default function SessionPage() {
         <Link href="/" className="text-sm font-semibold text-zinc-900 hover:text-accent">
           AI Data Analyst
         </Link>
-        <div className="text-xs text-zinc-400">
-          {meta?.filename} · {meta?.shape.rows.toLocaleString()} 行 × {meta?.shape.cols} 列
+        <div className="flex items-center gap-4 text-xs text-zinc-400">
+          <Link
+            href={`/sessions/${sessionId}/dashboard`}
+            className="text-accent hover:underline"
+          >
+            自动分析工作台 →
+          </Link>
+          <span>
+            {meta?.filename} · {meta?.shape.rows.toLocaleString()} 行 × {meta?.shape.cols} 列
+          </span>
         </div>
       </header>
 

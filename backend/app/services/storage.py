@@ -410,6 +410,53 @@ class SessionStore:
         )
         return path
 
+    # ---- 历史运行内的 View 读取（T06：data_ref 翻页，不触碰 active 指针） ----
+    @staticmethod
+    def _safe_name(name: str, label: str) -> str:
+        safe = Path(name).name
+        if safe != name or not safe:
+            raise StorageError(f"非法的{label}：{name}")
+        return safe
+
+    def run_view_dir(self, session_id: str, run_id: str, view_id: str) -> Path:
+        rid = self._safe_name(run_id, "运行标识")
+        vid = self._safe_name(view_id, "视图标识")
+        d = self.run_dir(session_id, rid) / "views" / vid
+        if not d.exists():
+            raise StorageError(f"运行 {rid} 中不存在视图：{vid}")
+        return d
+
+    def read_run_view_result(
+        self, session_id: str, run_id: str, view_id: str
+    ) -> pd.DataFrame:
+        path = self.run_view_dir(session_id, run_id, view_id) / "result.parquet"
+        if not path.exists():
+            raise StorageError("该视图结果文件不存在。")
+        return pd.read_parquet(path)
+
+    def list_runs(self, session_id: str) -> list[dict[str, Any]]:
+        """列举全部历史运行（最新在前），含发布状态与固化筛选口径。"""
+        runs_root = self._runs_dir(session_id)
+        if not runs_root.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        for d in sorted(runs_root.iterdir(), reverse=True):
+            manifest_file = d / "manifest.json"
+            if not (d.is_dir() and manifest_file.exists()):
+                continue
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+            out.append({
+                "run_id": manifest["run_id"],
+                "bundle_id": manifest["bundle_id"],
+                "status": manifest["status"].value
+                if hasattr(manifest["status"], "value") else manifest["status"],
+                "scope": manifest.get("scope", []),
+                "has_dashboard": (d / "dashboard.json").exists(),
+                "created_at": manifest["created_at"],
+                "published_at": manifest.get("published_at"),
+            })
+        return out
+
     # ---- DashboardArtifact：只发布完整版本，指针原子切换 ----
     def write_dashboard(
         self, session_id: str, payload: Any, *, expected_run_id: str | None = None

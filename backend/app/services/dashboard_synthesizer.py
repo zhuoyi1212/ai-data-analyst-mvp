@@ -25,19 +25,28 @@ from app.schemas.bundle import (
     ViewType,
 )
 from app.schemas.dashboard import (
+    AppliedFilter,
     ChartSpec,
     DashboardArtifact,
+    DashboardScope,
     DashboardSection,
+    FailedView,
     FilterDefinition,
     KPI,
+    ViewCard,
 )
 from app.schemas.dictionary import DataDictionary
+from app.services.bundle_planner import (
+    apply_scope_filters,
+    normalize_scope,
+)
 from app.services.derived_metrics import detect_derived_metrics
 from app.services.executor import execute_plan
 from app.services.metric_spec import effective_metric_spec
 from app.services.offline_fallback import build_plan
 from app.services.period_compare import PeriodCompareError, period_comparison
 from app.services.storage import SessionStore, StaleRunError
+from app.services.view_data import build_envelope
 
 MAX_PROBES = 3
 
@@ -128,7 +137,7 @@ def _build_kpis(
     execution: BundleExecutionResult,
     dictionary: DataDictionary,
     runner: ProbeRunner,
-    snapshot: pd.DataFrame,
+    scope_snapshot: pd.DataFrame,
 ) -> list[KPI]:
     ok = consumable_results(execution)
     overviews = [
@@ -157,7 +166,7 @@ def _build_kpis(
             mode = {"month": "mom", "week": "wow", "year": "yoy"}.get(gran, "mom")
             try:
                 pc = period_comparison(
-                    snapshot, tparams.date_column, metric,
+                    scope_snapshot, tparams.date_column, metric,
                     tparams.func.value, mode, is_rate=is_rate,
                 )
             except PeriodCompareError:
@@ -264,7 +273,8 @@ def _build_sections(
 
 
 def _build_filters(
-    bundle: AnalysisBundle, dictionary: DataDictionary, snapshot: pd.DataFrame
+    bundle: AnalysisBundle, dictionary: DataDictionary, snapshot: pd.DataFrame,
+    selected_by_col: dict[str, list[str]],
 ) -> list[FilterDefinition]:
     cards = {f.name: f for f in dictionary.fields}
     out: list[FilterDefinition] = []
@@ -277,8 +287,85 @@ def _build_filters(
         members = (
             snapshot[col].dropna().astype(str).drop_duplicates().sort_values().tolist()
         )
-        out.append(FilterDefinition(column=col, label=col, members=members[:30]))
+        out.append(FilterDefinition(
+            column=col, label=col, members=members[:30],
+            selected_values=selected_by_col.get(col),
+        ))
     return out
+
+
+# ----------------------------------------------------------------- T06 视图字典
+
+def validate_chart_fields(spec: ChartSpec, columns) -> None:
+    """T06 验收：ChartSpec 的 x/y 字段必须存在于输出 schema，错配拒绝。
+
+    build_chart_spec 与算子输出同源，正常不会错配；本门禁是显式契约闸，
+    任何字段漂移在此阻断合成，而不是让浏览器拿到无法渲染的坏图。
+    """
+    names = {str(c) for c in columns}
+    cols_hint = "、".join(sorted(names))
+    if spec.x_field is not None and spec.x_field not in names:
+        raise ValueError(
+            f"图表契约字段错配：x_field「{spec.x_field}」不在视图输出列（{cols_hint}）中，"
+            "请重新生成分析蓝图。"
+        )
+    for y in spec.y_fields:
+        if y not in names:
+            raise ValueError(
+                f"图表契约字段错配：y_field「{y}」不在视图输出列（{cols_hint}）中，"
+                "请重新生成分析蓝图。"
+            )
+
+
+def _section_for_type(t: ViewType) -> str | None:
+    for section_id, _, types in _SECTIONS:
+        if t in types:
+            return section_id
+    return None
+
+
+def _build_view_cards(
+    sid: str,
+    store: SessionStore,
+    bundle: AnalysisBundle,
+    views: dict[str, AnalysisView],
+    execution: BundleExecutionResult,
+    run_id: str,
+    specs: dict[str, ChartSpec],
+) -> dict[str, ViewCard]:
+    """视图字典：每个 View 一卡自足（图表 + 数据 + 口径 + 状态）。"""
+    results = {r.view_id: r for r in execution.views}
+    cards: dict[str, ViewCard] = {}
+    for view in bundle.analysis_views:
+        er = results.get(view.view_id)
+        common = dict(
+            view_id=view.view_id, title=view.title, question=view.question,
+            type=view.type, section_id=_section_for_type(view.type),
+            metric_label=view.metric_fields[0] if view.metric_fields else "",
+        )
+        if er is None or er.status == ViewStatus.failed:
+            reason = er.reason if er is not None else "该视角未返回执行结果。"
+            cards[view.view_id] = ViewCard(
+                **common, status=ViewStatus.failed, validity="unknown",
+                consumable=False, reason=reason,
+            )
+            continue
+        if not er.consumable:
+            cards[view.view_id] = ViewCard(
+                **common, status=er.status, validity=er.validity,
+                consumable=False, reason="该视角无有效数据，不进入展示。",
+                checks=er.checks,
+            )
+            continue
+        df = _view_result(store, sid, view)
+        data_ref = f"/sessions/{sid}/runs/{run_id}/views/{view.view_id}/rows"
+        cards[view.view_id] = ViewCard(
+            **common, chart_spec=specs.get(view.view_id),
+            data=build_envelope(view.type.value, df, data_ref),
+            status=er.status, validity=er.validity, consumable=True,
+            checks=er.checks,
+        )
+    return cards
 
 
 # ----------------------------------------------------------------- 主编排
@@ -346,26 +433,44 @@ def synthesize_dashboard(
         store.read_artifact(session_id, "dictionary")
     )
     snapshot = store.load_snapshot(session_id)
+    # T06：固化在 manifest 中的全局筛选口径 → 裁剪范围快照。
+    # KPI/Probe/Finding 全部在此同一范围内计算，筛选后可见内容必须一致。
+    norm_scope = normalize_scope(snapshot, manifest.scope)
+    scope_snapshot = apply_scope_filters(snapshot, norm_scope)
+
     views = {v.view_id: v for v in bundle.analysis_views}
     # T04：只有 status=success 且结果有效（pass/warn）才可进入仪表盘
     consumable_ids = set(consumable_results(execution).keys())
 
-    runner = ProbeRunner(session_id, store, snapshot)
+    runner = ProbeRunner(session_id, store, scope_snapshot)
     kpis = _build_kpis(
         session_id, store, bundle, views, execution, dictionary, runner,
-        snapshot,
+        scope_snapshot,
     )
 
-    # ChartSpec 随 view 级目录落盘（artifact 只持有 view_id 索引）
+    # ChartSpec 随 view 级目录落盘；字段必须真实存在于输出 schema（错配拒绝）
+    specs: dict[str, ChartSpec] = {}
     for vid in consumable_ids:
         spec = build_chart_spec(views[vid])
         if spec is not None:
+            df = _view_result(store, session_id, views[vid])
+            validate_chart_fields(spec, df.columns)
             store.write_view_chart_spec(
                 session_id, vid, spec.model_dump(mode="json")
             )
+            specs[vid] = spec
 
     sections = _build_sections(bundle, consumable_ids)
-    filters = _build_filters(bundle, dictionary, snapshot)
+    cards = _build_view_cards(
+        session_id, store, bundle, views, execution, run_id, specs
+    )
+    selected_by_col = {
+        str(f.get("column", "")): [str(v) for v in f.get("values", [])]
+        for f in manifest.scope
+    }
+    filters = _build_filters(
+        bundle, dictionary, snapshot, selected_by_col
+    )
 
     if findings is None:
         findings = detect_findings(
@@ -373,14 +478,43 @@ def synthesize_dashboard(
         )
     risks = [f for f in findings if f.type == "risk"]
 
+    consumable_count = sum(1 for c in cards.values() if c.consumable)
+    if consumable_count == 0:
+        state = "empty"       # 筛选后全部无数据：空态，不是错误，绝不伪造 0
+    elif consumable_count == len(cards):
+        state = "ready"
+    else:
+        state = "partial"
+
+    scope = DashboardScope(
+        filters=[
+            AppliedFilter(
+                column=str(f.get("column", "")),
+                values=[str(v) for v in f.get("values", [])],
+            )
+            for f in manifest.scope
+            if str(f.get("column", ""))
+        ],
+        snapshot_rows=len(snapshot.index),
+        participating_rows=len(scope_snapshot.index),
+    )
+    failed_views = [
+        FailedView(view_id=c.view_id, title=c.title, reason=c.reason)
+        for c in cards.values() if c.status == ViewStatus.failed
+    ]
+
     artifact = DashboardArtifact(
         run_id=run_id,
         bundle_id=bundle.bundle_id,
         title=bundle.title,
+        state=state,
+        scope=scope,
         kpis=kpis,
         sections=sections,
+        views=cards,
         findings=findings,
         risks=risks,
+        failed_views=failed_views,
         global_filters=filters,
     )
     # expected_run_id：迟到的合成响应若发现 active 已前进，绝不回切 current

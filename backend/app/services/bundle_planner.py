@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 import uuid
+import warnings
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -121,6 +122,7 @@ class Candidate:
     family_key: tuple  # 信息冗余去重键
     reason: str
     priority_group: int  # 选择阶段的优先级（小者优先）
+    role: str = "presentation"  # T07：presentation（Seed 展示）/ computation（内部证据）
 
 
 @dataclass
@@ -130,7 +132,7 @@ class SelectionContext:
     metrics: list[FieldProfile]
     dimensions: list[FieldProfile]
     snapshot_rows: int
-    max_views: int = 8
+    max_views: int = 10
 
 
 # ---------------------------------------------------------------- 候选生成
@@ -180,12 +182,13 @@ class CandidateGenerator:
                 priority_group=0,
             ))
 
-        # 2) trend：主指标必有趋势（即使是 DAU/库存/时长等非金额类）；
-        #    第二趋势仅给第二个 P&L 指标（多指标趋势对照）
+        # 2) trend：两个核心主指标各有趋势并对齐（即使是 DAU/新增、
+        #    入库/出库、时长/满意度等非金额指标）；排名 top-2 天然把
+        #    「单价」等第三位率指标排除在对齐之外
         if date_col and gran is not None and metrics:
             primary = metrics[0]
-            pnl_extra = [m for m in metrics[1:] if _metric_score(m.name) >= 4][:1]
-            for i, m in enumerate([primary] + pnl_extra):
+            extra = metrics[1:2]
+            for i, m in enumerate([primary] + extra):
                 func = _agg(m)
                 if func is None:
                     continue
@@ -301,7 +304,12 @@ class CandidateGenerator:
                     fields=[spec.numerator, spec.denominator, d.name],
                     metric_fields=[spec.numerator, spec.denominator],
                     dimension_fields=[d.name],
-                    family_key=("ratio", d.name, spec.key),
+                    # family_key 与 value_filter._family_signature 保持同构：
+                    # 第三槽位为 (分子, 分母)，两侧都能仅凭视图数据算出
+                    family_key=(
+                        "ratio", d.name,
+                        (spec.numerator, spec.denominator),
+                    ),
                     reason=(
                         f"规则探测到确定性派生指标「{spec.label}」"
                         f"=Σ{spec.numerator}/Σ{spec.denominator}（先聚合后相除），"
@@ -311,7 +319,9 @@ class CandidateGenerator:
                 ))
 
         # 4) relationship：优先字典探测到的相关对；否则在快照上确定性计算
-        #    （含率类指标对优先、|r| 显著才采用）；样本不足不生成
+        #    （含率类指标对优先）。T07：无论强弱都作为内部证据任务生成——
+        #    弱 r（含 r=0）默认不占展示位，但用户明确问到时可返回阴性结果；
+        #    样本不足（无法计算）不生成。
         pair, pair_computed = self._best_correlation_pair(dictionary, metrics, df)
         if pair and rows >= self.MIN_ROWS:
             x, y = pair
@@ -326,14 +336,18 @@ class CandidateGenerator:
                 dimension_fields=[],
                 family_key=("rel", x, y),
                 reason=(
-                    "快照规则计算中该指标对相关性最显著（含率/折扣类指标优先），值得关注"
+                    "快照规则计算中该指标对相关性最显著（含率/折扣类指标优先）；"
+                    "作为内部证据任务，|r| 显著才进入默认展示"
                     if pair_computed
-                    else "字典规则已探测到该指标对的相关性（或它们是两个主要数值指标）"
+                    else "字典规则已探测到该指标对的相关性（或它们是两个主要数值指标）；"
+                         "作为内部证据任务，|r| 显著才进入默认展示"
                 ),
                 priority_group=5,
+                role="computation",
             ))
 
-        # 5) anomaly：主指标离群（样本足够才生成）
+        # 5) anomaly：主指标离群（样本足够才生成）。T07：内部证据任务——
+        #    有离群才形成 Finding/默认展示，无离群默认隐藏（用户问起可返回阴性）。
         if metrics and rows >= self.MIN_ROWS:
             m = metrics[0]
             out.append(Candidate(
@@ -346,14 +360,13 @@ class CandidateGenerator:
                 metric_fields=[m.name],
                 dimension_fields=[],
                 family_key=("anom", m.name),
-                reason=f"{rows} 行样本下用 IQR 1.5 倍规则识别「{m.name}」离群",
+                reason=f"{rows} 行样本下用 IQR 1.5 倍规则识别「{m.name}」离群；"
+                       f"作为内部证据任务，发现离群才进入默认展示",
                 priority_group=4,
+                role="computation",
             ))
 
         return out
-
-    # 快照直接计算时，|r| 低于该值视为无显著关系，回退为前两个指标
-    MIN_ABS_R = 0.15
 
     @staticmethod
     def _best_correlation_pair(
@@ -361,12 +374,15 @@ class CandidateGenerator:
         metrics: list[FieldProfile],
         df: pd.DataFrame | None,
     ) -> tuple[tuple[str, str] | None, bool]:
-        """返回 ((x, y), computed)；弱信号/无证据时返回 None（反例 4：r=0 不占位）。"""
+        """返回 ((x, y), computed)。
+
+        T07：不再因 |r| 偏弱返回 None——弱 r（含 0）的关系视角作为内部
+        证据任务保留，由价值筛选默认隐藏；仅在无法取得任何指标对时返回 None。
+        """
         rels = [
             r for r in dictionary.relations
             if r.type == "correlation" and len(r.columns) >= 2
             and r.coefficient is not None
-            and abs(r.coefficient) >= CandidateGenerator.MIN_ABS_R
         ]
         if rels:
             # 含率/折扣类指标的对优先（如 折扣 vs 利润，负相关更有业务意义），
@@ -401,8 +417,9 @@ class CandidateGenerator:
                 if key > best_key:
                     best_key = key
                     best = (cols[i], cols[j])
-        # |r| 不显著就不生成关系视角——阴性结果不占默认 Dashboard 位置
-        if best is not None and best_key[1] >= CandidateGenerator.MIN_ABS_R:
+        # best 即最佳指标对（r 可能为 0/很弱）：作为证据任务返回，
+        # 是否进入默认展示交给价值筛选（T07）
+        if best is not None:
             return best, True
         return None, False
 
@@ -417,237 +434,145 @@ class BundleSelector(Protocol):
     ) -> list[Candidate]: ...
 
 
-_DIST_TYPES = (ViewType.comparison, ViewType.breakdown, ViewType.ranking)
-
-
 class RuleBundleSelector:
-    """规则选择：骨架 + 边际价值填充 + 去重 + 多样性约束。
+    """T07 Seed 选择：聚焦核心，不按图表类型凑数量。
 
-    规则（确定性、可解释，每条入选 view 带 selection_reason）：
-      A. 核心骨架（主指标驱动）：overview×(1~2) → trend → comparison
-         → breakdown → ranking，分布三件套落在不同维度；
-         当规则探测到确定性派生比率（如利润率）时，profitability 视角替换
-         主指标 ranking 槽位（锚点 breakdown → comparison）；
-      B. 去重铁律：同一 (dimension, metric) 不允许仅换 share/group_by/top_n 重复
-         （family_key 拦截）；同维度只允许在「跨指标对照」时用不同指标再进一次；
-         派生比率（derive_ratio）是同维度允许的第 3 视角，不占原始指标冗余额度；
-      C. 余量按边际价值顺序填充到上限 8：
-           1) 跨指标对照：第二高价值指标在主指标已用维度上复算（同维度不同指标，
-              指标背离/量利错位等跨 View 洞察的基础，优先于 anomaly）；
-           2) relationship（独特分析类型，常天然跨指标）；
-           3) anomaly（独特分析类型）；
-           4) 第二指标趋势；
-           5) 第二指标在「新维度」上的分布（类型可重复但维度+指标都必须新）；
-           6) 第三个高价值指标总览；
-      D. 总数 4-8（数据不支持时不强行凑数，绝不重复造视角）。
+    Seed（role=presentation，固定顺序，保证执行且默认可见）：
+      1. 核心 KPI：overview m0；m1 价值分≥3 时追加 overview m1（至多 2 个）；
+      2. 对齐趋势：排名 top-2 的两个核心主指标各一趋势（无条件对齐，
+         含 DAU/新增、入库/出库等非金额组合），双指标趋势不被任何
+         槽位挤掉（T07 验收）；
+      3. 基准拆分：m0 在最佳低基数维度上的 breakdown（一个，不做同维重复图）；
+    证据任务（role=computation，默认隐藏，结果保留可按需返回），按边际价值顺序：
+      relationship（最佳指标对，含弱 r/r=0）
+        → anomaly（m0 离群）
+        → m1 在基准维度上的 comparison（跨指标对照 / 量利背离证据）
+        → profitability（基准维度派生比率）
+        → 额外维度 comparison / ranking（m0、m1），
+      全部经 family_key 去重，总数受 ctx.max_views 封顶；数据不支持时绝不凑数。
     """
 
     def select(
         self, candidates: list[Candidate], ctx: SelectionContext
     ) -> list[Candidate]:
-        chosen: list[Candidate] = []
-        used_families: set[tuple] = set()
-        used_dist_dims: set[str] = set()   # 已被分布族占用的维度
-        used_type_metric: set[tuple] = set()  # (分析类型, 指标)：同类型同指标不重复
-
-        def take(
-            c: Candidate, *, contrast: bool = False, reason: str | None = None
-        ) -> bool:
-            """入选一个候选。contrast=True 表示刻意安排的同维度跨指标对照。"""
-            if len(chosen) >= ctx.max_views:
-                return False
-            if c.family_key in used_families:
-                return False
-            if c.type in _DIST_TYPES:
-                dim = c.dimension_fields[0]
-                metric = c.metric_fields[0] if c.metric_fields else None
-                if dim in used_dist_dims:
-                    # 同维度：仅接受显式安排的跨指标对照（该维度上已存在不同指标）
-                    same_dim = [
-                        d for d in chosen
-                        if d.type in _DIST_TYPES
-                        and d.dimension_fields
-                        and d.dimension_fields[0] == dim
-                    ]
-                    other_metric = any(
-                        d.metric_fields and d.metric_fields[0] != metric
-                        for d in same_dim
-                    )
-                    if not contrast or not other_metric:
-                        return False
-                elif (c.type, metric) in used_type_metric:
-                    # 新维度但同类型同指标：主指标不在同类型上占第二个维度
-                    return False
-            if reason is not None:
-                c = replace(c, reason=reason)
-            chosen.append(c)
-            used_families.add(c.family_key)
-            if c.type in _DIST_TYPES:
-                used_dist_dims.add(c.dimension_fields[0])
-                used_type_metric.add(
-                    (c.type, c.metric_fields[0] if c.metric_fields else None)
-                )
-            return True
-
         by_type: dict[ViewType, list[Candidate]] = {}
-        for c in sorted(candidates, key=lambda x: x.priority_group):
+        for c in candidates:
             by_type.setdefault(c.type, []).append(c)
-
-        def take_one(
-            vt: ViewType, prefer_metric: str | None = None, **kw
-        ) -> Candidate | None:
-            pool = by_type.get(vt, [])
-            if prefer_metric:
-                pool = sorted(
-                    pool,
-                    key=lambda c: 0
-                    if c.metric_fields and c.metric_fields[0] == prefer_metric
-                    else 1,
-                )
-            for c in pool:
-                if take(c, **kw):
-                    return c
-            return None
 
         metrics = ctx.metrics
         m0 = metrics[0].name if metrics else None
+        # m1（≥3）用于核心 KPI 追加；趋势对齐则无条件覆盖 top-2 主指标
+        m1_trend = metrics[1].name if len(metrics) > 1 else None
+        m1 = (
+            m1_trend
+            if m1_trend is not None and _metric_score(m1_trend) >= 3
+            else None
+        )
 
-        # A. 核心骨架（主指标驱动；第二高价值指标总览立刻形成指标对照）
-        take_one(ViewType.overview)
-        if len(chosen) < ctx.max_views:
-            ov = by_type.get(ViewType.overview, [])
-            if len(ov) > 1:
-                take(ov[1])
-        take_one(ViewType.trend, m0)
-        take_one(ViewType.comparison, m0)
-        take_one(ViewType.breakdown, m0)
-
-        # profitability 槽位策略（Phase 2 计划批准）：探测到确定性派生比率时，
-        # 比率视角替换主指标 ranking 槽位（锚点 = breakdown 维度，其次 comparison）。
-        # 候选在对照之后再入选，使顺序为 结构 → 对照 → 利润率。
-        prof_pool = by_type.get(ViewType.profitability, [])
-
-        def _anchor_dims() -> list[str]:
-            anchors: list[str] = []
-            for want in (ViewType.breakdown, ViewType.comparison):
-                for d in chosen:
-                    if (
-                        d.type is want
-                        and d.metric_fields
-                        and d.metric_fields[0] == m0
-                        and d.dimension_fields
-                    ):
-                        anchors.append(d.dimension_fields[0])
-            return list(dict.fromkeys(anchors))
-
-        def _profitability_on_anchors() -> Candidate | None:
-            anchors = set(_anchor_dims())
-            if not anchors:
-                return None
-            for c in prof_pool:
-                if c.dimension_fields and c.dimension_fields[0] in anchors:
-                    return c
+        def _find(
+            vt: ViewType, metric: str | None = None, dim: str | None = None
+        ) -> Candidate | None:
+            for c in by_type.get(vt, []):
+                if metric is not None and not (
+                    c.metric_fields and c.metric_fields[0] == metric
+                ):
+                    continue
+                if dim is not None and not (
+                    c.dimension_fields and c.dimension_fields[0] == dim
+                ):
+                    continue
+                return c
             return None
 
-        prof_pick = _profitability_on_anchors()
-        # 比率视角将占用 ranking 槽位；无可用锚点时 ranking 照常填充
-        if prof_pick is None:
-            take_one(ViewType.ranking, m0)
+        # ------------------------------------------------ Seed（presentation）
+        seed: list[Candidate] = []
+        ov0 = _find(ViewType.overview, m0) if m0 else None
+        ov1 = _find(ViewType.overview, m1) if m1 else None
+        for c in (ov0, ov1):
+            if c is not None:
+                seed.append(c)
 
-        # C-1. 跨指标对照：第二高价值指标（价值分 ≥3）在主指标已用分布维度上复算。
-        #      锚点维度优先 breakdown（结构对照最容易读出量利背离），其次 comparison；
-        #      同一锚点上优先 comparison（group_by 口径，避免负值占比）。
-        if len(metrics) >= 2 and _metric_score(metrics[1].name) >= 3:
-            m1 = metrics[1].name
-            anchors: list[str] = []
-            for want in (ViewType.breakdown, ViewType.comparison):
-                for d in chosen:
-                    if (
-                        d.type is want
-                        and d.metric_fields
-                        and d.metric_fields[0] == m0
-                        and d.dimension_fields
-                    ):
-                        anchors.append(d.dimension_fields[0])
-            anchors = list(dict.fromkeys(anchors))  # 去重保序
-
-            def _try_contrast() -> bool:
-                for dim in anchors:
-                    for vt in (ViewType.comparison, ViewType.breakdown):
-                        hit = next(
-                            (
-                                c
-                                for c in by_type.get(vt, [])
-                                if c.metric_fields
-                                and c.metric_fields[0] == m1
-                                and c.dimension_fields
-                                and c.dimension_fields[0] == dim
-                            ),
-                            None,
-                        )
-                        if hit is None:
-                            continue
-                        if take(
-                            hit,
-                            contrast=True,
-                            reason=(
-                                f"第二高价值指标「{m1}」在同一维度「{dim}」上与主指标"
-                                f"「{m0}」形成跨指标对照，可识别指标背离/量利错位"
-                            ),
-                        ):
-                            return True
-                return False
-
-            _try_contrast()
-
-        # profitability 正式入选：锚点 breakdown → comparison，顺序紧随跨指标对照，
-        # 使阅读路径为 主指标结构 → 第二指标对照 → 派生比率（同维度允许第 3 个视角，
-        # 但必须是派生比率，不占原始指标冗余额度）。
-        if prof_pick is not None:
-            for dim in _anchor_dims():
-                hit = next(
-                    (
-                        c
-                        for c in prof_pool
-                        if c.dimension_fields and c.dimension_fields[0] == dim
-                    ),
-                    None,
+        t0 = _find(ViewType.trend, m0) if m0 else None
+        t1 = _find(ViewType.trend, m1_trend) if m1_trend else None
+        for metric, c in ((m0, t0), (m1_trend, t1)):
+            if c is not None:
+                seed.append(c)
+            elif metric is not None:
+                # 不再静默跳过：核心指标的对齐趋势缺失时显式记录，
+                # 便于定位「无日期字段 / 聚合口径不支持」等真实原因
+                warnings.warn(
+                    f"核心指标「{metric}」缺少趋势候选，Seed 未包含其对齐趋势"
+                    f"（可能无日期字段或该指标无支持的聚合口径）",
+                    RuntimeWarning,
+                    stacklevel=2,
                 )
-                if hit is None:
-                    continue
-                num, den = hit.metric_fields[0], hit.metric_fields[1]
-                if take(
-                    hit,
-                    reason=(
-                        f"确定性派生比率「{hit.title}」（Σ{num}/Σ{den}，先聚合后相除，"
-                        f"LLM 不参与计算）在同一锚点维度「{dim}」上与销售结构、利润对照"
-                        f"形成第三视角，替换主指标 ranking 槽位以提升信息价值"
-                    ),
-                ):
-                    break
 
-        # C-2/3. 独特分析类型：关系 → 异常
-        take_one(ViewType.relationship)
-        take_one(ViewType.anomaly)
+        # 基准拆分：同指标所有 breakdown 候选中，按维度信息量挑选——
+        # 2-3 成员过粗，6-12 成员结构最可读，>20 过杂；同分时保留候选生成顺序。
+        breakdowns = [
+            c for c in by_type.get(ViewType.breakdown, [])
+            if m0 and c.metric_fields and c.metric_fields[0] == m0
+        ]
 
-        # C-4. 第二指标趋势（价值分 ≥3 才值得一条独立趋势）
-        if len(metrics) >= 2 and _metric_score(metrics[1].name) >= 3:
-            take_one(ViewType.trend, metrics[1].name)
+        def _dim_info(dim: str | None) -> int:
+            if dim is None:
+                return -1
+            card = next(
+                (d.cardinality or 0 for d in ctx.dimensions if d.name == dim), 0
+            )
+            # 4-8 成员结构最可读；3 个过粗、9-15 略杂；2 或 16-20 只作兜底
+            if 4 <= card <= 8:
+                return 3
+            if card == 3 or 9 <= card <= 15:
+                return 2
+            if card == 2 or 16 <= card <= 20:
+                return 1
+            return 0
 
-        # C-5. 第二指标在新维度上的分布（维度 + 指标都必须是新信息）
-        if len(metrics) >= 2:
-            m1 = metrics[1].name
-            for vt in (ViewType.comparison, ViewType.breakdown, ViewType.ranking):
-                if len(chosen) >= ctx.max_views:
-                    break
-                take_one(vt, m1)
+        b0 = max(breakdowns, key=lambda c: _dim_info(c.dimension_fields[0]), default=None)
+        if b0 is not None:
+            seed.append(b0)
+        baseline_dim = b0.dimension_fields[0] if b0 else None
 
-        # C-6. 仍有余量：第三个高价值指标总览
-        ov = by_type.get(ViewType.overview, [])
-        if len(metrics) >= 3 and len(ov) > 2 and _metric_score(metrics[2].name) >= 3:
-            take(ov[2])
+        # -------------------------------------------- 证据任务（computation）
+        ordered: list[Candidate] = []
+        rel = _find(ViewType.relationship)
+        if rel is not None:
+            ordered.append(rel)
+        anom = _find(ViewType.anomaly, m0) if m0 else None
+        if anom is not None:
+            ordered.append(anom)
+        if m1 and baseline_dim:
+            contrast = _find(ViewType.comparison, m1, baseline_dim)
+            if contrast is not None:
+                ordered.append(contrast)
+        if baseline_dim:
+            prof = _find(ViewType.profitability, dim=baseline_dim)
+            if prof is not None:
+                ordered.append(prof)
+        # 余量证据：额外维度 comparison / ranking（m0、m1）；不挑无证据的图
+        for vt in (ViewType.comparison, ViewType.ranking):
+            for c in by_type.get(vt, []):
+                if c.metric_fields and c.metric_fields[0] in (m0, m1):
+                    ordered.append(c)
 
-        return chosen
+        used_families = {c.family_key for c in seed}
+        seen: set[int] = {id(c) for c in seed}
+        comps: list[Candidate] = []
+        for c in ordered:
+            if id(c) in seen:
+                continue
+            seen.add(id(c))
+            if c.family_key in used_families:
+                continue
+            used_families.add(c.family_key)
+            if c.role != "computation":
+                c = replace(c, role="computation")
+            comps.append(c)
+            if len(seed) + len(comps) >= ctx.max_views:
+                break
+
+        return [*seed, *comps]
 
 
 # ---------------------------------------------------------------- 组装 Bundle
@@ -669,6 +594,7 @@ def _to_view(idx: int, c: Candidate) -> AnalysisView:
         dimension_fields=c.dimension_fields,
         source="rule.candidate_generation+rule_selection",
         selection_reason=c.reason,
+        role=c.role,
     )
 
 

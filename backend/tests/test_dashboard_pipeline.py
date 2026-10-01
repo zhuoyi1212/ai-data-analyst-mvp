@@ -78,18 +78,24 @@ def test_dashboard_artifact_full_pipeline(tmp_path):
     artifact = synthesize_dashboard(sid, store)
     assert isinstance(artifact, DashboardArtifact)
 
-    # 五段布局齐全；8 View 全部可追溯
+    # 五段布局齐全；T07：sections 只追溯可消费的 presentation 视图
     assert [s.section_id for s in artifact.sections] == [
         "overview", "trend", "structure", "diagnosis", "detail"
     ]
     section_ids = {vid for s in artifact.sections for vid in s.view_ids}
     bundle = store.read_bundle(sid)
+    presentation_ids = {
+        v["view_id"] for v in bundle["analysis_views"]
+        if v["role"] == "presentation"
+    }
     executed = {
         v["view_id"] for v in store.read_bundle_execution(sid)["views"]
         if v["status"] == "success"
     }
-    assert section_ids == executed
-    assert len(section_ids) == len(bundle["analysis_views"])
+    assert section_ids == executed & presentation_ids
+    assert len(section_ids) == len(presentation_ids)
+    # computation 证据任务同样全部执行（阴性结果保留可按需返回）
+    assert executed == {v["view_id"] for v in bundle["analysis_views"]}
 
     # KPI：Sales / Profit 总览 + 利润率 KPI（=ΣProfit/ΣSales，单位 %）
     labels = [k.label for k in artifact.kpis]
@@ -122,27 +128,26 @@ def test_findings_detect_divergence_negative_member_and_correlation(tmp_path):
     artifact = synthesize_dashboard(sid, store)
     findings = artifact.findings
 
-    # 1) 量利背离（对照锚点 Sub-Category：Tables 收入占比高但利润为负）
+    # 1) 量利背离（对照锚点 Sub-Category：Tables 收入占比高但利润为负）。
+    #    T07：同成员的亏损风险与背离是同一业务问题，合并为一个 Finding。
     div = [f for f in findings if f.type == "structure"]
     assert div, "应产出量利背离 finding"
     d = div[0]
-    assert "Tables" in d.summary and "Sub-Category" in d.summary
+    assert "Tables" in d.title and "Tables" in d.summary
+    assert "Sub-Category" in d.summary
     assert d.importance == "high"
     assert len(d.evidence_view_ids) == 2
+    # 合并后保留亏损风险的四要素文案
+    assert all(w in d.summary for w in ("现象", "位置", "建议"))
 
-    # 2) 亏损成员风险 + drilldown 探针（Tables → Product 下的负贡献产品）
-    risks = [f for f in findings if f.type == "risk"]
-    neg = next(f for f in risks if "Tables" in f.title)
-    assert neg.importance == "high"
-    assert neg.drilldown is not None
-    assert neg.drilldown.child_dimension == "Product"
-    kid_names = [c.name for c in neg.drilldown.top_negative_children]
+    # 2) drilldown 探针随合并保留（Tables → Product 下的负贡献产品）
+    assert d.drilldown is not None
+    assert d.drilldown.child_dimension == "Product"
+    kid_names = [c.name for c in d.drilldown.top_negative_children]
     assert {"Tables-A", "Tables-B"} <= set(kid_names)
     # drilldown 筛选条件锁定到锚点成员
-    assert neg.drilldown.filters[0].column == "Sub-Category"
-    assert neg.drilldown.filters[0].value == "Tables"
-    # 四要素：现象/位置/量化/建议
-    assert all(w in neg.summary for w in ("现象", "位置", "建议"))
+    assert d.drilldown.filters[0].column == "Sub-Category"
+    assert d.drilldown.filters[0].value == "Tables"
 
     # 3) Discount × Profit 强负相关 → risk 文案 + 因果免责语
     corr = [f for f in findings if f.evidence_view_ids and f.title.startswith("负相关")]

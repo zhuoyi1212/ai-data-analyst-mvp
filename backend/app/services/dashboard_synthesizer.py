@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,6 +47,7 @@ from app.services.metric_spec import effective_metric_spec
 from app.services.offline_fallback import build_plan
 from app.services.period_compare import PeriodCompareError, period_comparison
 from app.services.storage import SessionStore, StaleRunError
+from app.services.value_filter import ValueAssessment, filter_run
 from app.services.view_data import build_envelope
 
 MAX_PROBES = 3
@@ -262,11 +264,15 @@ def build_chart_spec(view: AnalysisView) -> ChartSpec | None:
 def _build_sections(
     bundle: AnalysisBundle, success_ids: set[str]
 ) -> list[DashboardSection]:
+    """T07：sections 只收 presentation 且可消费的视图；
+    computation 证据任务默认不占布局（隐藏后仍可按需返回）。"""
     sections: list[DashboardSection] = []
     for sid_, title, types in _SECTIONS:
         ids = [
             v.view_id for v in bundle.analysis_views
-            if v.view_id in success_ids and v.type in types
+            if v.view_id in success_ids
+            and v.type in types
+            and v.role == "presentation"
         ]
         sections.append(DashboardSection(section_id=sid_, title=title, view_ids=ids))
     return sections
@@ -332,16 +338,29 @@ def _build_view_cards(
     execution: BundleExecutionResult,
     run_id: str,
     specs: dict[str, ChartSpec],
+    assessments: dict[str, ValueAssessment],
 ) -> dict[str, ViewCard]:
-    """视图字典：每个 View 一卡自足（图表 + 数据 + 口径 + 状态）。"""
+    """视图字典：每个 View 一卡自足（图表 + 数据 + 口径 + 状态）。
+
+    T07：computation 证据任务照常产出自足卡片，但 default_hidden=True；
+    presentation 视图永远默认可见。阴性结果（弱 r/无异常）随卡片保留可返回。
+    """
     results = {r.view_id: r for r in execution.views}
     cards: dict[str, ViewCard] = {}
     for view in bundle.analysis_views:
         er = results.get(view.view_id)
+        assess = assessments.get(view.view_id)
         common = dict(
             view_id=view.view_id, title=view.title, question=view.question,
             type=view.type, section_id=_section_for_type(view.type),
             metric_label=view.metric_fields[0] if view.metric_fields else "",
+            role=view.role,
+            value_scores=assess.scores if assess else {},
+            hide_reasons=assess.hide_reasons if assess else [],
+            default_hidden=(
+                assess.default_hidden
+                if assess else view.role == "computation"
+            ),
         )
         if er is None or er.status == ViewStatus.failed:
             reason = er.reason if er is not None else "该视角未返回执行结果。"
@@ -442,6 +461,9 @@ def synthesize_dashboard(
     # T04：只有 status=success 且结果有效（pass/warn）才可进入仪表盘
     consumable_ids = set(consumable_results(execution).keys())
 
+    # T07：执行后价值评估（数据有效性/影响/证据/新证据/冗余/展示成本）
+    assessments = filter_run(bundle, execution)
+
     runner = ProbeRunner(session_id, store, scope_snapshot)
     kpis = _build_kpis(
         session_id, store, bundle, views, execution, dictionary, runner,
@@ -462,7 +484,7 @@ def synthesize_dashboard(
 
     sections = _build_sections(bundle, consumable_ids)
     cards = _build_view_cards(
-        session_id, store, bundle, views, execution, run_id, specs
+        session_id, store, bundle, views, execution, run_id, specs, assessments
     )
     selected_by_col = {
         str(f.get("column", "")): [str(v) for v in f.get("values", [])]
@@ -473,15 +495,23 @@ def synthesize_dashboard(
     )
 
     if findings is None:
+        # scope_tag：当前全局筛选口径指纹，作为 Finding 去重键的 scope 部分
+        scope_tag = hashlib.sha256(
+            json.dumps(manifest.scope, ensure_ascii=False, sort_keys=True).encode()
+        ).hexdigest()[:12]
         findings = detect_findings(
-            session_id, store, bundle, execution, dictionary, runner
+            session_id, store, bundle, execution, dictionary, runner,
+            scope_tag=scope_tag,
         )
     risks = [f for f in findings if f.type == "risk"]
 
-    consumable_count = sum(1 for c in cards.values() if c.consumable)
+    # T07：state 只统计 presentation 视图——computation 证据任务隐藏与否
+    # 不影响整体状态；默认展示的核心视图全部可消费才是 ready。
+    presentation_cards = [c for c in cards.values() if c.role == "presentation"]
+    consumable_count = sum(1 for c in presentation_cards if c.consumable)
     if consumable_count == 0:
         state = "empty"       # 筛选后全部无数据：空态，不是错误，绝不伪造 0
-    elif consumable_count == len(cards):
+    elif consumable_count == len(presentation_cards):
         state = "ready"
     else:
         state = "partial"
@@ -500,7 +530,8 @@ def synthesize_dashboard(
     )
     failed_views = [
         FailedView(view_id=c.view_id, title=c.title, reason=c.reason)
-        for c in cards.values() if c.status == ViewStatus.failed
+        for c in cards.values()
+        if c.role == "presentation" and c.status == ViewStatus.failed
     ]
 
     artifact = DashboardArtifact(

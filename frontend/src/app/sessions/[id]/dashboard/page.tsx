@@ -14,6 +14,7 @@ import type {
   KPI,
   RunSummary,
   SessionMeta,
+  ViewCard,
 } from "@/lib/types";
 import {
   Badge,
@@ -25,6 +26,23 @@ import {
   Spinner,
 } from "@/components/ui";
 import { ViewChartCard } from "@/components/dashboard/DashboardChart";
+
+function ChartCardBlock({ card, runId }: { card: ViewCard; runId: string }) {
+  return (
+    <Card>
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-800">{card.title}</h3>
+          <p className="mt-0.5 text-xs text-zinc-400">{card.question}</p>
+        </div>
+        <Badge tone={card.validity === "pass" ? "green" : "amber"}>
+          {card.validity}
+        </Badge>
+      </div>
+      <ViewChartCard key={`${runId}:${card.view_id}`} card={card} />
+    </Card>
+  );
+}
 
 const STATE_META: Record<string, { label: string; tone: "green" | "amber" | "neutral" }> = {
   ready: { label: "就绪", tone: "green" },
@@ -171,6 +189,12 @@ export default function WorkbenchPage() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [viewingHistory, setViewingHistory] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+
+  // 切换运行版本时折叠隐藏分析区
+  useEffect(() => {
+    setShowHidden(false);
+  }, [artifact?.run_id]);
 
   const loadInitial = useCallback(async () => {
     const { meta: m } = await api.getSession(sessionId);
@@ -369,8 +393,8 @@ export default function WorkbenchPage() {
         <Card className="py-10 text-center">
           <h2 className="text-lg font-semibold text-zinc-900">自动分析工作台</h2>
           <p className="mx-auto mt-2 max-w-md text-sm text-zinc-500">
-            系统将基于数据自动生成 4–8 个多维分析视角，批量执行后合成仪表盘。
-            数值全部由确定性 pandas 引擎计算，LLM 不参与计算。
+            系统将先聚焦核心 KPI、对齐趋势与一个基准拆分；弱信号分析默认隐藏，
+            可按需展开。数值全部由确定性 pandas 引擎计算，LLM 不参与计算。
           </p>
           <div className="mt-6 flex justify-center">
             <Button onClick={runFullAnalysis} loading={!!busy} className="px-8">
@@ -442,33 +466,56 @@ export default function WorkbenchPage() {
                         const card = artifact.views[vid];
                         if (!card) return null;
                         return (
-                          <Card key={vid}>
-                            <div className="mb-3 flex items-start justify-between gap-2">
-                              <div>
-                                <h3 className="text-sm font-semibold text-zinc-800">
-                                  {card.title}
-                                </h3>
-                                <p className="mt-0.5 text-xs text-zinc-400">
-                                  {card.question}
-                                </p>
-                              </div>
-                              <Badge
-                                tone={card.validity === "pass" ? "green" : "amber"}
-                              >
-                                {card.validity}
-                              </Badge>
-                            </div>
-                            <ViewChartCard
-                              key={`${artifact.run_id}:${vid}`}
-                              card={card}
-                            />
-                          </Card>
+                          <ChartCardBlock
+                            key={vid}
+                            card={card}
+                            runId={artifact.run_id}
+                          />
                         );
                       })}
                     </div>
                   </section>
                 ))}
             </>
+          )}
+
+          {Object.values(artifact.views).some((c) => c.default_hidden) && (
+            <section className="mb-6">
+              <button
+                onClick={() => setShowHidden((v) => !v)}
+                className="text-sm text-zinc-500 underline-offset-4 hover:text-accent hover:underline"
+              >
+                {showHidden
+                  ? "收起隐藏分析"
+                  : `显示隐藏分析（${
+                      Object.values(artifact.views).filter(
+                        (c) => c.default_hidden
+                      ).length
+                    }）`}
+              </button>
+              {showHidden && (
+                <div className="mt-3">
+                  <p className="mb-3 text-xs text-zinc-400">
+                    内部证据计算：弱相关、无异常或重复信息默认不占主视图，
+                    结果已保留，可在此核查。
+                  </p>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {Object.values(artifact.views)
+                      .filter((c) => c.default_hidden)
+                      .map((card) => (
+                        <div key={card.view_id}>
+                          {card.hide_reasons.length > 0 && (
+                            <p className="mb-2 text-xs text-zinc-400">
+                              隐藏原因：{card.hide_reasons.join("；")}
+                            </p>
+                          )}
+                          <ChartCardBlock card={card} runId={artifact.run_id} />
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </section>
           )}
 
           <section className="mb-6">

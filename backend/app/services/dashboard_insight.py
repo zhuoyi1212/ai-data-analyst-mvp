@@ -97,14 +97,24 @@ def _values(df: pd.DataFrame, dim: str) -> dict[str, float]:
 
 def _detect_divergence(
     sid: str, store: SessionStore, views: dict[str, AnalysisView],
-    numerator: str, denominator: str,
-) -> Finding | None:
+    numerator: str, denominator: str, scope_tag: str,
+) -> tuple[Finding, tuple] | None:
     # dim → {metric: (view, df)}
+    # T07：背离回答的是 Seed 基准拆分这个业务问题——只看 presentation
+    # breakdown 所在维度，不被额外维度的 computation 比较带偏。
+    seed_dim = next(
+        (v.dimension_fields[0] for v in views.values()
+         if v.role == "presentation" and v.type is ViewType.breakdown
+         and v.dimension_fields),
+        None,
+    )
     by_dim: dict[str, dict[str, tuple[AnalysisView, pd.DataFrame]]] = {}
     for v in views.values():
         if v.type not in (ViewType.comparison, ViewType.breakdown):
             continue
         if not v.dimension_fields or not v.metric_fields:
+            continue
+        if seed_dim is not None and v.dimension_fields[0] != seed_dim:
             continue
         metric = v.metric_fields[0]
         if metric not in (numerator, denominator):
@@ -144,7 +154,7 @@ def _detect_divergence(
         if negatives else ""
     )
     importance = "high" if negatives else "medium"
-    return Finding(
+    finding = Finding(
         finding_id="",  # 由 assemble 统一编号
         title=f"「{dim}」量利结构背离：{member} 收入占比高但利润贡献低",
         summary=(
@@ -157,6 +167,9 @@ def _detect_divergence(
         evidence_view_ids=evidence,
         importance=importance,
     )
+    # T07 去重键（metric, scope, period, question）：与同成员亏损风险合并
+    dedup_key = (numerator, scope_tag, "", f"profit_problem:{dim}:{member}")
+    return finding, dedup_key
 
 
 # ----------------------------------------------------------------- 2. 负成员风险 + 下钻
@@ -197,8 +210,8 @@ def _child_dimension(
 def _detect_negative_risk(
     sid: str, store: SessionStore,
     views: dict[str, AnalysisView], dictionary: DataDictionary,
-    numerator: str, runner,
-) -> Finding | None:
+    numerator: str, runner, scope_tag: str,
+) -> tuple[Finding, tuple] | None:
     # 选利润为负最严重的成员（只用原始指标口径的 comparison/breakdown 视图；
     # profitability 的 value 是派生比率，不能当金额引用）
     worst = None  # (value, dim, member, view_id)
@@ -279,7 +292,7 @@ def _detect_negative_risk(
     else:
         location = f"位置：「{dim}」成员「{member}」整体 {numerator} 为 {_fmt_num(value)}。"
         suggestion = "建议下钻到更细维度（子品类/区域/客户）定位亏损来源。"
-    return Finding(
+    finding = Finding(
         finding_id="",
         title=f"亏损风险：「{member}」{numerator} 为负",
         summary=(
@@ -291,6 +304,9 @@ def _detect_negative_risk(
         importance="high",
         drilldown=drilldown,
     )
+    # T07：与同成员量利背离合并（同一业务问题）
+    dedup_key = (numerator, scope_tag, "", f"profit_problem:{dim}:{member}")
+    return finding, dedup_key
 
 
 # ----------------------------------------------------------------- 3. 相关性
@@ -298,8 +314,9 @@ def _detect_negative_risk(
 def _detect_relationship(
     sid: str, store: SessionStore,
     views: dict[str, AnalysisView], execution: BundleExecutionResult,
-) -> list[Finding]:
-    out: list[Finding] = []
+    scope_tag: str,
+) -> list[tuple[Finding, tuple]]:
+    out: list[tuple[Finding, tuple]] = []
     for v in views.values():
         if v.type is not ViewType.relationship:
             continue
@@ -314,7 +331,7 @@ def _detect_relationship(
         if r < 0 and _RATE_DRIVER.search(x) is None and _RATE_DRIVER.search(y):
             x, y = y, x
         if r < 0:
-            out.append(Finding(
+            f = Finding(
                 finding_id="",
                 title=f"负相关风险：「{x}」越高时「{y}」越低（r={r:.2f}）",
                 summary=(
@@ -326,9 +343,9 @@ def _detect_relationship(
                 type="risk",
                 evidence_view_ids=[v.view_id],
                 importance="high",
-            ))
+            )
         else:
-            out.append(Finding(
+            f = Finding(
                 finding_id="",
                 title=f"指标关联：「{x}」与「{y}」正相关（r={r:.2f}）",
                 summary=(
@@ -340,7 +357,9 @@ def _detect_relationship(
                 type="relationship",
                 evidence_view_ids=[v.view_id],
                 importance="medium",
-            ))
+            )
+        key = (f"{x}~{y}", scope_tag, "", f"relationship:{x}:{y}")
+        out.append((f, key))
     return out
 
 
@@ -356,13 +375,34 @@ def _metric_is_rate(dictionary: DataDictionary, metric: str) -> bool:
     return bool(spec and not spec.additive and (spec.unit == "%" or spec.denominator))
 
 
-def _detect_trend(
+def _detect_trends(
     sid: str, store: SessionStore,
     views: dict[str, AnalysisView], dictionary: DataDictionary,
-) -> Finding | None:
-    tv = next((v for v in views.values() if v.type is ViewType.trend), None)
-    if tv is None or not tv.metric_fields:
-        return None
+    scope_tag: str,
+) -> list[tuple[Finding, tuple]]:
+    """遍历 Seed 中全部 presentation 趋势视图（m0、m1 各产各的 Finding）。
+
+    T07 修复：旧实现 next() 只取第一个趋势，第二核心指标（如 Profit）
+    明显下滑时 Findings 层零信号。
+    """
+    trend_views = [
+        v for v in views.values()
+        if v.type is ViewType.trend and v.role == "presentation"
+        and v.metric_fields
+    ]
+    out: list[tuple[Finding, tuple]] = []
+    for tv in trend_views:
+        item = _detect_one_trend(tv, sid, store, dictionary, scope_tag)
+        if item is not None:
+            out.append(item)
+    return out
+
+
+def _detect_one_trend(
+    tv: AnalysisView,
+    sid: str, store: SessionStore,
+    dictionary: DataDictionary, scope_tag: str,
+) -> tuple[Finding, tuple] | None:
     params = tv.plan.steps[-1].params
     date_col = params.date_column
     gran = params.granularity.value
@@ -408,7 +448,7 @@ def _detect_trend(
             f"环比{'增长' if growing else '下滑'} {abs(growth) * 100:.1f}%"
         )
         change_text = f"变化 {abs(growth) * 100:.1f}%"
-    return Finding(
+    finding = Finding(
         finding_id="",
         title=title,
         summary=(
@@ -422,6 +462,46 @@ def _detect_trend(
         evidence_view_ids=[tv.view_id],
         importance="medium",
     )
+    key = (metric, scope_tag, mode, f"trend:{metric}:{mode}")
+    return finding, key
+
+
+# ----------------------------------------------------------------- 5. 异常
+
+def _detect_anomaly(
+    sid: str, store: SessionStore,
+    views: dict[str, AnalysisView], execution: BundleExecutionResult,
+    scope_tag: str,
+) -> tuple[Finding, tuple] | None:
+    """anomaly 证据任务存在离群点才产出 Finding；无异常默认不凑。"""
+    av = next((v for v in views.values() if v.type is ViewType.anomaly), None)
+    if av is None or not av.metric_fields:
+        return None
+    metric = av.metric_fields[0]
+    summary = _step_summary(execution, av.view_id)
+    count = summary.get("outlier_count")
+    if count is None or int(count) == 0:
+        return None
+    count = int(count)
+    rate = float(summary.get("outlier_rate", 0.0))
+    lo = summary.get("lower_bound")
+    hi = summary.get("upper_bound")
+    bounds = f"，判定区间 [{_fmt_num(float(lo))}, {_fmt_num(float(hi))}]" if lo is not None else ""
+    finding = Finding(
+        finding_id="",
+        title=f"异常信号：「{metric}」发现 {count} 个离群值（占 {rate * 100:.1f}%）",
+        summary=(
+            f"现象：IQR 规则在「{metric}」上标记了离群值{bounds}。"
+            f"位置：全部快照中 {count} 行被标记，离群率 {rate * 100:.1f}%。"
+            f"量化影响：这些极端值可能放大或拉低聚合结果，影响趋势判断。"
+            f"建议：按离群优先排序的明细逐条核查，先排除录入错误，再判断是否真实业务事件。"
+        ),
+        type="anomaly",
+        evidence_view_ids=[av.view_id],
+        importance="high" if rate >= 0.05 else "medium",
+    )
+    key = (metric, scope_tag, "", f"anomaly:{metric}")
+    return finding, key
 
 
 # ----------------------------------------------------------------- 协议与编排
@@ -447,27 +527,79 @@ def detect_findings(
     execution: BundleExecutionResult,
     dictionary: DataDictionary,
     runner,
+    *,
+    scope_tag: str = "",
 ) -> list[Finding]:
     views = _success_views(bundle, execution)
     specs = detect_derived_metrics(dictionary)
     numerator = specs[0].numerator if specs else None
     denominator = specs[0].denominator if specs else None
 
-    raw: list[Finding] = []
+    raw: list[tuple[Finding, tuple]] = []
     if numerator and denominator:
-        d = _detect_divergence(session_id, store, views, numerator, denominator)
+        d = _detect_divergence(
+            session_id, store, views, numerator, denominator, scope_tag
+        )
         if d:
             raw.append(d)
         risk = _detect_negative_risk(
-            session_id, store, views, dictionary, numerator, runner
+            session_id, store, views, dictionary, numerator, runner, scope_tag
         )
         if risk:
             raw.append(risk)
-    raw.extend(_detect_relationship(session_id, store, views, execution))
-    t = _detect_trend(session_id, store, views, dictionary)
-    if t:
-        raw.append(t)
+    raw.extend(_detect_relationship(
+        session_id, store, views, execution, scope_tag
+    ))
+    raw.extend(_detect_trends(session_id, store, views, dictionary, scope_tag))
+    a = _detect_anomaly(session_id, store, views, execution, scope_tag)
+    if a:
+        raw.append(a)
 
-    for i, f in enumerate(raw, start=1):
+    merged = merge_same_question(raw)
+    for i, f in enumerate(merged, start=1):
         f.finding_id = f"finding_{i:02d}"
-    return raw
+    return merged
+
+
+# ----------------------------------------------------------------- 同问题合并
+
+_IMPORTANCE_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def merge_same_question(
+    raw: list[tuple[Finding, tuple]],
+) -> list[Finding]:
+    """T07：去重键 (metric, scope, period, question) 相同的 Findings 合并。
+
+    - 证据视图 ID 取并集（同一问题的多条证据全部保留可下钻）；
+    - 重要性取最高，标题/摘要以最高重要性 Finding 为主，
+      其余以「另见」标题补充，不丢弃信息。
+    """
+    groups: dict[tuple, list[Finding]] = {}
+    order: list[tuple] = []
+    for finding, key in raw:
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(finding)
+
+    out: list[Finding] = []
+    for key in order:
+        items = sorted(groups[key], key=lambda f: _IMPORTANCE_ORDER[f.importance])
+        primary = items[0]
+        if len(items) == 1:
+            out.append(primary)
+            continue
+        evidence = sorted({
+            vid for f in items for vid in f.evidence_view_ids
+        })
+        extras = [f"另见「{f.title}」。" for f in items[1:]]
+        merged = primary.model_copy(update={
+            "evidence_view_ids": evidence,
+            "summary": primary.summary + "".join(extras),
+            "drilldown": primary.drilldown or next(
+                (f.drilldown for f in items[1:] if f.drilldown), None
+            ),
+        })
+        out.append(merged)
+    return out

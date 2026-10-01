@@ -32,7 +32,11 @@ def test_bundle_generate_and_execute(api_store, tmp_path: Path):
     resp = client.post(f"/sessions/{sid}/analysis-bundle")
     assert resp.status_code == 200, resp.text
     bundle = resp.json()
-    assert 4 <= len(bundle["analysis_views"]) <= 8
+    # T07：Seed 3-5 个 presentation，加上 computation 证据任务总数 ≤ 10
+    assert 3 <= len(bundle["analysis_views"]) <= 10
+    assert 3 <= sum(
+        v["role"] == "presentation" for v in bundle["analysis_views"]
+    ) <= 5
     assert bundle["bundle_id"]
 
     # GET 可重新读取（页面恢复）

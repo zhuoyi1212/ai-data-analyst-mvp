@@ -24,6 +24,12 @@ from app.schemas.plan import AnalysisPlan
 
 _STRICT = ConfigDict(extra="forbid")
 
+# T07：区分内部计算任务与展示 View——
+# presentation：默认展示的视图（Seed：核心 KPI / 双指标对齐趋势 / 一个基准拆分）；
+# computation ：为业务问题提供证据的内部计算任务，默认不占展示位，
+#               结果保留可按需返回（含阴性结果，如 r=0、无离群）。
+ViewRole = Literal["presentation", "computation"]
+
 
 class ViewType(str, Enum):
     overview = "overview"            # 总体表现
@@ -71,6 +77,9 @@ class AnalysisView(BaseModel):
     # 候选来源标记：规则名 + 选择理由，便于追溯与后续替换为 LLM Selection
     source: str = "rule"
     selection_reason: str = ""
+
+    # T07：展示 View 或内部计算任务（默认 presentation 保持向后兼容）
+    role: ViewRole = "presentation"
 
 
 class AnalysisBundle(BaseModel):

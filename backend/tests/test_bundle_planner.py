@@ -63,7 +63,14 @@ def test_bundle_view_count_and_coverage(name: str, tmp_path: Path):
         title=GOLDEN[name]["filename"],
     )
     views = bundle.analysis_views
-    assert 4 <= len(views) <= 8, f"{name} 应产出 4-8 个 View，实际 {len(views)}"
+    # T07：Seed（presentation）只保留核心 KPI/趋势（必选）与基准拆分
+    # （有可加指标 + 合适维度时）：2-5 个，绝不按图表类型凑数量
+    presentation = [v for v in views if v.role == "presentation"]
+    assert 2 <= len(presentation) <= 5, f"{name} Seed 应为 2-5 个，实际 {len(presentation)}"
+    assert any(v.type is ViewType.overview for v in presentation)
+    if dictionary.date_fields():
+        assert any(v.type is ViewType.trend for v in presentation)
+    assert len(views) <= 10, f"{name} 总 View 不应超过 10，实际 {len(views)}"
     # view_id 唯一、按序编号
     assert [v.view_id for v in views] == [f"view_{i:02d}" for i in range(1, len(views) + 1)]
     # 所有 View 都有可解释的选择理由（可解释性）
@@ -232,13 +239,23 @@ def _cand(family, vt, group=2) -> Candidate:
     )
 
 
+def _metric_prof(name: str) -> FieldProfile:
+    return FieldProfile(
+        name=name, physical_type="float", semantic_type=SemanticType.metric,
+        meaning=name, confidence=Confidence.high, confirmed=True,
+        cardinality=100, is_metric=True,
+    )
+
+
 def test_selector_dedup_family_and_cap():
-    """同 family_key 只取一个；总数不超过 8。"""
-    ctx = SelectionContext(metrics=[], dimensions=[], snapshot_rows=100)
+    """T07：同 family_key 只取一个（含 Seed 与证据任务之间）；总数不超过 max_views。"""
+    ctx = SelectionContext(metrics=[_metric_prof("金额")], dimensions=[], snapshot_rows=100)
     cands = [
+        Candidate(type=ViewType.overview, title="t", question="q", op="aggregate",
+                  hint={}, fields=[], metric_fields=["金额"], dimension_fields=[],
+                  family_key=("overview", "金额"), reason="r", priority_group=0),
         _cand(("dist", "区域", "金额"), ViewType.comparison),
-        _cand(("dist", "区域", "金额"), ViewType.breakdown),  # 同 family → 丢弃
-        _cand(("dist", "品类", "金额"), ViewType.breakdown),
+        _cand(("dist", "区域", "金额"), ViewType.breakdown),  # 同 family，二选一
         _cand(("dist", "城市", "金额"), ViewType.ranking),
     ]
     chosen = RuleBundleSelector().select(cands, ctx)
@@ -247,15 +264,23 @@ def test_selector_dedup_family_and_cap():
     assert ("dist", "区域", "金额") in keys
     assert len(chosen) == 3
     assert len({c.type for c in chosen}) == 3
+    # Seed（overview + breakdown）默认展示；额外 ranking 为隐藏证据任务
+    assert chosen[0].role == "presentation"
+    assert chosen[-1].role == "computation"
 
 
 def test_selector_respects_max_views():
-    ctx = SelectionContext(metrics=[], dimensions=[], snapshot_rows=100, max_views=2)
+    ctx = SelectionContext(
+        metrics=[_metric_prof("金额甲"), _metric_prof("金额乙")],
+        dimensions=[], snapshot_rows=100, max_views=2,
+    )
     cands = [
         Candidate(type=ViewType.overview, title="t", question="q", op="aggregate",
-                  hint={}, fields=[], metric_fields=[f"m{i}"], dimension_fields=[],
-                  family_key=("overview", f"m{i}"), reason="r", priority_group=0)
-        for i in range(5)
+                  hint={}, fields=[], metric_fields=["金额甲"], dimension_fields=[],
+                  family_key=("overview", "金额甲"), reason="r", priority_group=0),
+        Candidate(type=ViewType.overview, title="t", question="q", op="aggregate",
+                  hint={}, fields=[], metric_fields=["金额乙"], dimension_fields=[],
+                  family_key=("overview", "金额乙"), reason="r", priority_group=0),
     ]
     chosen = RuleBundleSelector().select(cands, ctx)
     assert len(chosen) == 2

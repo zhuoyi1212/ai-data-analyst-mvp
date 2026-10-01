@@ -59,12 +59,18 @@ def test_dashboard_synthesize_and_get(api_store, tmp_path: Path):
     assert [s.section_id for s in artifact.sections] == [
         "overview", "trend", "structure", "diagnosis", "detail"
     ]
-    # T04：只有 status=success 且可消费（pass/warn）的 View 才能进 sections
+    # T04：只有 status=success 且可消费（pass/warn）的 View 才能进 sections；
+    # T07：sections 只收 presentation，computation 证据任务不占默认视图
+    bundle_resp = client.get(f"/sessions/{sid}/analysis-bundle")
+    presentation_ids = {
+        v["view_id"] for v in bundle_resp.json()["analysis_views"]
+        if v["role"] == "presentation"
+    }
     consumable_ids = {
         v["view_id"] for v in execution["views"] if v.get("consumable", True)
     }
     slotted = {vid for s in artifact.sections for vid in s.view_ids}
-    assert slotted == consumable_ids
+    assert slotted == consumable_ids & presentation_ids
 
     # GET 恢复 + dashboard.json 按运行版本落盘（runs/{run_id}/）
     got = client.get(f"/sessions/{sid}/dashboard")

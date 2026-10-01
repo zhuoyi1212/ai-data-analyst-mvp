@@ -144,6 +144,12 @@ class ViewCard(BaseModel):
     checks: list[ViewValidationItem] = Field(default_factory=list)
     metric_label: str = ""             # 业务指标名（与绘图字段分离）
 
+    # T07：默认可见性与价值评估
+    role: Literal["presentation", "computation"] = "presentation"
+    default_hidden: bool = False       # computation 证据不足时默认隐藏（结果仍保留）
+    hide_reasons: list[str] = Field(default_factory=list)
+    value_scores: dict[str, float] = Field(default_factory=dict)
+
 
 # ----------------------------------------------------------------- 筛选/范围
 

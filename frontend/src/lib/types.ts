@@ -274,6 +274,11 @@ export interface ViewCard {
   reason: string;
   checks: ViewValidationItem[];
   metric_label: string;
+  // T07：角色与默认可见性 / 价值评估
+  role: 'presentation' | 'computation';
+  default_hidden: boolean;
+  hide_reasons: string[];
+  value_scores: Record<string, number>;
 }
 
 export interface KPI {

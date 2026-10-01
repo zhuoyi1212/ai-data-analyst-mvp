@@ -204,7 +204,7 @@ def test_counterexample_3_chart_spec_fields_exist_in_output(tmp_path: Path):
 # ----------------------------------------------------------- 反例 4：r=0 强占视图
 
 def test_counterexample_4_zero_correlation_not_selected():
-    """100 行有效数据但 Pearson r=0：不得生成 relationship View。"""
+    """100 行有效数据但 Pearson r=0：relationship 只能作为 computation 隐藏证据，不占默认视图。"""
     dates = pd.date_range("2024-01-01", periods=100, freq="D")
     # [0,1,1,0] 在每个长度 4 的对称块内与线性 X 严格正交，100 行 Pearson r=0
     y_pattern = [0, 1, 1, 0]
@@ -229,7 +229,9 @@ def test_counterexample_4_zero_correlation_not_selected():
                      cardinality=2, is_metric=True),
     ], complete=True)
     bundle = build_bundle(dictionary, df, snapshot_rows=100, title="zero-r")
-    assert not any(v.type is ViewType.relationship for v in bundle.analysis_views)
+    rel_views = [v for v in bundle.analysis_views if v.type is ViewType.relationship]
+    # T07：r=0 不占默认视图——存在时也只能是 computation
+    assert all(v.role == "computation" for v in rel_views)
 
 
 # ----------------------------------------------------------- 反例 5/6/7：时间口径

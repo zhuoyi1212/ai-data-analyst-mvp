@@ -433,6 +433,221 @@ def op_derive_ratio(df: pd.DataFrame, p: Any) -> OpResult:
     })
 
 
+# ----------------------------------------------------- 12/13 T08 跨指标信号
+
+
+def _window_group_values(
+    df: pd.DataFrame, date_column: str, dimension: str,
+    metric: str, func: str,
+    start: pd.Timestamp, end: pd.Timestamp,
+) -> pd.Series:
+    """窗口内按维度分组的指标聚合（T08；窗口对齐复用 T05 日历口径）。"""
+    dates = pd.to_datetime(df[date_column], errors="coerce")
+    mask = (dates >= start) & (dates <= end)
+    sub = df.loc[mask]
+    if sub.empty:
+        return pd.Series(dtype=float)
+    _require_column(sub, dimension)
+    if func == "count":
+        return sub.groupby(dimension, dropna=False).size().astype(float)
+    if func == "count_distinct":
+        _require_column(sub, metric)
+        return (sub.groupby(dimension, dropna=False)[metric]
+                .nunique().astype(float))
+    s, _, _ = _metric_input(sub, metric, func)
+    work = pd.DataFrame({dimension: sub[dimension].to_numpy(), "_m": s.to_numpy()})
+    return work.groupby(dimension, dropna=False)["_m"].agg(
+        _AGG_PANDAS[func]
+    ).astype(float)
+
+
+def _period_windows(
+    df: pd.DataFrame, date_column: str, mode: str
+) -> tuple:
+    """返回 (cur_start, cur_end, base_start, base_end, spec)；数据不足即 EngineError。"""
+    from app.services.period_compare import build_period_spec
+
+    dates = pd.to_datetime(df[date_column], errors="coerce").dropna()
+    if dates.empty:
+        raise EngineError("日期字段中没有可用于比较的有效时间数据。")
+    spec = build_period_spec(dates.max(), mode, dates)
+    return (
+        pd.Timestamp(spec.current_start), pd.Timestamp(spec.current_end),
+        pd.Timestamp(spec.compare_start), pd.Timestamp(spec.compare_end),
+        spec,
+    )
+
+
+def op_contribution(df: pd.DataFrame, p: Any) -> OpResult:
+    """分组变化贡献（加法会计恒等式，T08）。
+
+    ΔT = T1 − T0 = Σ_i (v1_i − v0_i) + unexplained
+    - sum 口径：成员为窗口内无行时按 0；恒等式精确成立，unexplained≈0；
+    - count_distinct 口径：unexplained 显式承载键跨组重复/消失效应；
+    - contribution_share = δ_i / |ΔT|（对「变化」的贡献，不是成员值占总
+      利润的组成比；总利润为负时仍有效）；|ΔT|≈0 时为 null。
+    贡献是会计拆解，文案不称因果。
+    """
+    from app.services.period_compare import _window_aggregate
+
+    cur_s, cur_e, base_s, base_e, spec = _period_windows(
+        df, p.date_column, p.period.value
+    )
+    g_cur = _window_group_values(
+        df, p.date_column, p.dimension, p.metric, p.func.value, cur_s, cur_e
+    )
+    g_base = _window_group_values(
+        df, p.date_column, p.dimension, p.metric, p.func.value, base_s, base_e
+    )
+    if g_cur.empty and g_base.empty:
+        raise EngineError("当前期与对比期窗口内均无数据，无法分解变化。")
+
+    members = sorted(
+        set(g_base.index).union(g_cur.index), key=lambda x: str(x)
+    )
+    base_vals = [float(g_base.get(m, 0.0)) for m in members]
+    cur_vals = [float(g_cur.get(m, 0.0)) for m in members]
+    deltas = [c - b for c, b in zip(cur_vals, base_vals)]
+
+    total_base = _window_aggregate(
+        df, p.date_column, p.metric, p.func.value, base_s, base_e
+    )
+    total_cur = _window_aggregate(
+        df, p.date_column, p.metric, p.func.value, cur_s, cur_e
+    )
+    total_base = float(total_base) if total_base is not None else 0.0
+    total_cur = float(total_cur) if total_cur is not None else 0.0
+    total_delta = total_cur - total_base
+    explained = float(sum(deltas))
+    unexplained = total_delta - explained
+    shares = [
+        (d / total_delta if abs(total_delta) > 1e-9 else None) for d in deltas
+    ]
+
+    out = pd.DataFrame({
+        p.dimension: list(members),
+        "base_value": base_vals, "current_value": cur_vals,
+        "delta": deltas, "contribution_share": shares,
+    })
+    out = out.reindex(
+        out["delta"].abs().sort_values(ascending=False).index
+    ).reset_index(drop=True)
+
+    partial_note = "（当期未结束，按截至日等长窗口比较）" \
+        if spec.completeness != "complete" else ""
+    formula = (
+        f"「{p.metric}」按「{p.dimension}」的变化贡献"
+        f"（{spec.compare_start}~{spec.compare_end} → "
+        f"{spec.current_start}~{spec.current_end}{partial_note}，{p.func.value} 口径）"
+    )
+    return OpResult(out, formula, {
+        "total_base_value": total_base,
+        "total_current_value": total_cur,
+        "total_delta": total_delta,
+        "explained_delta": explained,
+        "unexplained_delta": unexplained,
+        # 回算残差：total_delta − explained − unexplained，恒为 0（契约留痕）
+        "identity_residual": total_delta - explained - unexplained,
+        "current_label": f"{spec.current_start} ~ {spec.current_end}",
+        "base_label": f"{spec.compare_start} ~ {spec.compare_end}",
+        "completeness": spec.completeness,
+        "func": p.func.value,
+        "members": len(members),
+    })
+
+
+def op_rate_decomposition(df: pd.DataFrame, p: Any) -> OpResult:
+    """率的结构变化分解（shift-share，T08）。
+
+    R1 − R0 = Σ w0(r1−r0) + Σ r0(w1−w0) + Σ(r1−r0)(w1−w0)
+            = within（各组率变化）+ mix（结构权重变化）+ interaction
+    - 分子分母均为窗口内 Σ 先聚合后相除（与 derive_ratio 同口径）；
+    - 成员缺失窗口的率以该窗口整体率作为反事实填充，权重为 0，
+      恒等式仍严格成立；原始率列保留 null。
+    """
+    cur_s, cur_e, base_s, base_e, spec = _period_windows(
+        df, p.date_column, p.period.value
+    )
+    n_base = _window_group_values(
+        df, p.date_column, p.dimension, p.numerator, "sum", base_s, base_e
+    )
+    d_base = _window_group_values(
+        df, p.date_column, p.dimension, p.denominator, "sum", base_s, base_e
+    )
+    n_cur = _window_group_values(
+        df, p.date_column, p.dimension, p.numerator, "sum", cur_s, cur_e
+    )
+    d_cur = _window_group_values(
+        df, p.date_column, p.dimension, p.denominator, "sum", cur_s, cur_e
+    )
+    if d_base.empty and d_cur.empty:
+        raise EngineError("当前期与对比期窗口内均无分母数据，无法分解率变化。")
+
+    D0 = float(d_base.sum())
+    D1 = float(d_cur.sum())
+    if D0 == 0 or D1 == 0:
+        raise EngineError(
+            f"分母合计为 0（基期 {D0:g} / 当前 {D1:g}），率不可分解。"
+        )
+    N0 = float(n_base.sum())
+    N1 = float(n_cur.sum())
+    R0, R1 = N0 / D0, N1 / D1
+
+    members = sorted(
+        set(d_base.index).union(d_cur.index), key=lambda x: str(x)
+    )
+    rows = []
+    for m in members:
+        nb = float(n_base.get(m, 0.0))
+        db = float(d_base.get(m, 0.0))
+        nc = float(n_cur.get(m, 0.0))
+        dc = float(d_cur.get(m, 0.0))
+        rb = (nb / db) if db != 0 else None
+        rc = (nc / dc) if dc != 0 else None
+        wb, wc = db / D0, dc / D1
+        rb_f = rb if rb is not None else R0
+        rc_f = rc if rc is not None else R1
+        within = wb * (rc_f - rb_f)
+        mix = rb_f * (wc - wb)
+        interaction = (rc_f - rb_f) * (wc - wb)
+        rows.append((m, rb, rc, wb, wc, within, mix, interaction))
+
+    out = pd.DataFrame(rows, columns=[
+        p.dimension, "base_rate", "current_rate", "base_weight",
+        "current_weight", "within", "mix", "interaction",
+    ])
+    out = out.reindex(
+        (out["within"] + out["mix"] + out["interaction"])
+        .abs().sort_values(ascending=False).index
+    ).reset_index(drop=True)
+
+    within_eff = float(out["within"].sum())
+    mix_eff = float(out["mix"].sum())
+    inter_eff = float(out["interaction"].sum())
+    change = R1 - R0
+    partial_note = "（当期未结束，按截至日等长窗口比较）" \
+        if spec.completeness != "complete" else ""
+    formula = (
+        f"「{p.numerator}/{p.denominator}」按「{p.dimension}」的率结构变化"
+        f"（within+mix+interaction{partial_note}）"
+    )
+    return OpResult(out, formula, {
+        "base_overall_rate": R0,
+        "current_overall_rate": R1,
+        "change_pp": change * 100,
+        "within_effect_pp": within_eff * 100,
+        "mix_effect_pp": mix_eff * 100,
+        "interaction_effect_pp": inter_eff * 100,
+        "identity_residual": change - within_eff - mix_eff - inter_eff,
+        "total_base_numerator": N0, "total_base_denominator": D0,
+        "total_current_numerator": N1, "total_current_denominator": D1,
+        "current_label": f"{spec.current_start} ~ {spec.current_end}",
+        "base_label": f"{spec.compare_start} ~ {spec.compare_end}",
+        "completeness": spec.completeness,
+        "members": len(members),
+    })
+
+
 _DISPATCH: dict[str, Callable[[pd.DataFrame, Any], OpResult]] = {
     "filter": op_filter,
     "aggregate": op_aggregate,
@@ -445,6 +660,8 @@ _DISPATCH: dict[str, Callable[[pd.DataFrame, Any], OpResult]] = {
     "correlation": op_correlation,
     "outlier_flag": op_outlier_flag,
     "derive_ratio": op_derive_ratio,
+    "contribution": op_contribution,
+    "rate_decomposition": op_rate_decomposition,
 }
 
 

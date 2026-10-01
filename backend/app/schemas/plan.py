@@ -189,6 +189,50 @@ class DeriveRatioStep(_StepBase):
     params: DeriveRatioParams
 
 
+# --------------------------------------------------------- T08 跨指标信号
+
+
+class ContributionParams(BaseModel):
+    """分组变化贡献（T08）：Δ总 = Σ Δ分组（会计加法恒等式）。
+
+    - func=sum：可加总量（金额/销量）；
+    - func=count_distinct：仅在业务键已确认时由 Planner 启用（Orders 类）；
+    - 率/评分/库存等不可加指标不产生本任务。
+    """
+
+    model_config = _STRICT
+    date_column: str = Field(min_length=1)
+    metric: str = Field(min_length=1)
+    dimension: str = Field(min_length=1)
+    func: AggFunc = AggFunc.sum
+    period: ComparePeriod = ComparePeriod.mom
+
+
+class ContributionStep(_StepBase):
+    op: Literal["contribution"]
+    params: ContributionParams
+
+
+class RateDecompositionParams(BaseModel):
+    """率的结构变化（T08）：整体率变化 = within + mix + interaction。
+
+    必须同时给出分子、分母两个原始字段（事件分母，如 Sales/Profit、
+    Visitors/Conversions）；只有列内比率（无分母字段）时 Planner 不启用。
+    """
+
+    model_config = _STRICT
+    date_column: str = Field(min_length=1)
+    numerator: str = Field(min_length=1)
+    denominator: str = Field(min_length=1)
+    dimension: str = Field(min_length=1)
+    period: ComparePeriod = ComparePeriod.mom
+
+
+class RateDecompositionStep(_StepBase):
+    op: Literal["rate_decomposition"]
+    params: RateDecompositionParams
+
+
 PlanStep = Annotated[
     Union[
         FilterStep,
@@ -202,6 +246,8 @@ PlanStep = Annotated[
         CorrelationStep,
         OutlierFlagStep,
         DeriveRatioStep,
+        ContributionStep,
+        RateDecompositionStep,
     ],
     Field(discriminator="op"),
 ]

@@ -212,6 +212,9 @@ export function ViewChartCard({ card }: { card: ViewCard }) {
   }
   if (isDetail) return <PagedTable card={card} />;
   if (!card.chart_spec) {
+    // T08：无图表契约但内嵌多行结果（变化贡献 / 率结构分解表）→ 表格；
+    // 无行时才按指标卡空态处理
+    if (envelope.rows.length > 0) return <PagedTable card={card} />;
     return <p className="py-4 text-sm text-zinc-400">该视角以指标卡展示。</p>;
   }
   const chart = renderChart(card, envelope.rows);

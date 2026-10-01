@@ -132,7 +132,7 @@ class SelectionContext:
     metrics: list[FieldProfile]
     dimensions: list[FieldProfile]
     snapshot_rows: int
-    max_views: int = 10
+    max_views: int = 12
 
 
 # ---------------------------------------------------------------- 候选生成
@@ -318,6 +318,84 @@ class CandidateGenerator:
                     priority_group=3,
                 ))
 
+        # 3.6) T08 跨指标信号（锚定全部低基数维度，Selector 只保留基准
+        #      拆分维度；全部 role=computation，默认隐藏，Finding 引用时透出）。
+        if date_col and gran is not None and low_dims:
+            # (a) 分组变化贡献：可加 sum 指标；count_distinct 仅在业务键
+            #     已确认（entity_key）时启用（Orders/AOV 规则）。
+            for m in metrics:
+                ms = specs.get(m.name)
+                agg = _spec_func(ms)
+                eligible = (
+                    ms is not None and ms.additive
+                    and ms.aggregation == "sum"
+                ) or (
+                    ms is not None
+                    and ms.aggregation == "count_distinct"
+                    and bool(ms.entity_key)
+                )
+                if not eligible:
+                    continue
+                for d in low_dims:
+                    out.append(Candidate(
+                        type=ViewType.contribution,
+                        title=f"「{m.name}」变化的「{d.name}」贡献分解",
+                        question=(
+                            f"「{m.name}」最近一期相对上一期的变化，"
+                            f"各「{d.name}」分别贡献多少（会计拆解）？"
+                        ),
+                        op="contribution",
+                        hint={
+                            "date_column": date_col, "metric": m.name,
+                            "dimension": d.name, "func": agg.value,
+                            "period": "mom",
+                        },
+                        fields=[date_col, m.name, d.name],
+                        metric_fields=[m.name],
+                        dimension_fields=[d.name],
+                        family_key=("contrib", d.name, m.name),
+                        reason=(
+                            f"「{m.name}」口径 {'可加总和' if ms.additive else '业务键已确认的去重计数'}，"
+                            f"变化可按「{d.name}」做加法恒等式分解并回算"
+                        ),
+                        priority_group=3,
+                        role="computation",
+                    ))
+
+            # (b) 率的结构变化：必须有分子、分母两个原始字段（事件分母）。
+            for rspec in detect_derived_metrics(dictionary):
+                for d in low_dims:
+                    out.append(Candidate(
+                        type=ViewType.rate_shift,
+                        title=f"「{rspec.label}」变化的「{d.name}」结构分解",
+                        question=(
+                            f"「{rspec.label}」的变化中，各组率变化（within）"
+                            f"与结构权重变化（mix）各占多少？"
+                        ),
+                        op="rate_decomposition",
+                        hint={
+                            "date_column": date_col,
+                            "numerator": rspec.numerator,
+                            "denominator": rspec.denominator,
+                            "dimension": d.name, "period": "mom",
+                        },
+                        fields=[date_col, rspec.numerator,
+                                rspec.denominator, d.name],
+                        metric_fields=[rspec.numerator, rspec.denominator],
+                        dimension_fields=[d.name],
+                        family_key=(
+                            "rateshift", d.name,
+                            (rspec.numerator, rspec.denominator),
+                        ),
+                        reason=(
+                            f"规则探测到分子「{rspec.numerator}」与事件分母"
+                            f"「{rspec.denominator}」，可分解 within/mix 效应，"
+                            f"识别「各组改善、整体下降」的结构悖论"
+                        ),
+                        priority_group=3,
+                        role="computation",
+                    ))
+
         # 4) relationship：优先字典探测到的相关对；否则在快照上确定性计算
         #    （含率类指标对优先）。T07：无论强弱都作为内部证据任务生成——
         #    弱 r（含 r=0）默认不占展示位，但用户明确问到时可返回阴性结果；
@@ -446,8 +524,10 @@ class RuleBundleSelector:
     证据任务（role=computation，默认隐藏，结果保留可按需返回），按边际价值顺序：
       relationship（最佳指标对，含弱 r/r=0）
         → anomaly（m0 离群）
+        → contribution（m0/m1 基准维度变化贡献，T08）
         → m1 在基准维度上的 comparison（跨指标对照 / 量利背离证据）
         → profitability（基准维度派生比率）
+        → rate_shift（基准维度率结构变化，T08）
         → 额外维度 comparison / ranking（m0、m1），
       全部经 family_key 去重，总数受 ctx.max_views 封顶；数据不支持时绝不凑数。
     """
@@ -542,14 +622,27 @@ class RuleBundleSelector:
         anom = _find(ViewType.anomaly, m0) if m0 else None
         if anom is not None:
             ordered.append(anom)
+        # T08：m0 变化贡献（基准维度），规模-盈利背离的量化证据
+        if baseline_dim:
+            contrib0 = _find(ViewType.contribution, m0, baseline_dim)
+            if contrib0 is not None:
+                ordered.append(contrib0)
         if m1 and baseline_dim:
             contrast = _find(ViewType.comparison, m1, baseline_dim)
             if contrast is not None:
                 ordered.append(contrast)
+            # T08：m1 变化贡献（如 Profit 下滑由谁构成）
+            contrib1 = _find(ViewType.contribution, m1, baseline_dim)
+            if contrib1 is not None:
+                ordered.append(contrib1)
         if baseline_dim:
             prof = _find(ViewType.profitability, dim=baseline_dim)
             if prof is not None:
                 ordered.append(prof)
+            # T08：率结构变化（Simpson 悖论证据）
+            rateshift = _find(ViewType.rate_shift, dim=baseline_dim)
+            if rateshift is not None:
+                ordered.append(rateshift)
         # 余量证据：额外维度 comparison / ranking（m0、m1）；不挑无证据的图
         for vt in (ViewType.comparison, ViewType.ranking):
             for c in by_type.get(vt, []):

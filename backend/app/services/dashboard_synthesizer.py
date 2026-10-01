@@ -66,6 +66,7 @@ _SECTIONS: list[tuple[str, str, set[ViewType]]] = [
     ("structure", "结构分布", {ViewType.breakdown, ViewType.comparison}),
     ("diagnosis", "诊断分析", {
         ViewType.profitability, ViewType.relationship, ViewType.anomaly,
+        ViewType.contribution, ViewType.rate_shift,
     }),
     ("detail", "明细与排名", {ViewType.ranking}),
 ]

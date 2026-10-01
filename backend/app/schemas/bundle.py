@@ -40,6 +40,9 @@ class ViewType(str, Enum):
     relationship = "relationship"    # 指标关系（相关）
     anomaly = "anomaly"              # 异常/离群
     profitability = "profitability"  # 盈利/效率（Phase 2：派生指标 ratio）
+    # T08：跨指标信号（分解表，默认 computation）
+    contribution = "contribution"    # 分组变化贡献（加法会计恒等式）
+    rate_shift = "rate_shift"        # 率的结构变化（within/mix/interaction）
 
 
 # 候选生成 → 选择 流水线中，候选与最终 view 的分析类型同一集合。
@@ -55,6 +58,9 @@ VIEW_CHART: dict[ViewType, ChartType] = {
     ViewType.relationship: ChartType.scatter,
     ViewType.anomaly: ChartType.line_outlier,
     ViewType.profitability: ChartType.bar,  # 各维度成员的派生比率（利润率）
+    # T08：第一版以可回算分解表呈现（chart_spec 为 None，前端表格展示）
+    ViewType.contribution: ChartType.table,
+    ViewType.rate_shift: ChartType.table,
 }
 
 

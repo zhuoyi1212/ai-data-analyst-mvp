@@ -504,6 +504,181 @@ def _detect_anomaly(
     return finding, key
 
 
+# ----------------------------------------------------------------- T08 跨指标信号
+
+MIN_SCALE_GROWTH = 0.05     # 规模指标增长显著阈值
+MIN_PROFIT_DECLINE = 0.10   # 盈利指标下降显著阈值
+MIN_RATE_SHIFT_PP = 1.0     # 整体率变化显著阈值（百分点）
+
+
+def _detect_scale_profit_divergence(
+    sid: str, store: SessionStore,
+    views: dict[str, AnalysisView], dictionary: DataDictionary,
+    scope_tag: str,
+) -> tuple[Finding, tuple] | None:
+    """规模增长但盈利下降（T08 黄金案例 1：增收不增利）。
+
+    两个指标在同一等长窗口口径下方向相反且都显著；profit 的贡献分解
+    （若执行成功）作为量化证据，最大负贡献成员写入摘要。
+    """
+    specs = detect_derived_metrics(dictionary)
+    if not specs:
+        return None
+    rspec = specs[0]
+    scale, profit = rspec.denominator, rspec.numerator
+
+    tv = next(
+        (v for v in views.values()
+         if v.role == "presentation" and v.type is ViewType.trend),
+        None,
+    )
+    if tv is None:
+        return None
+    date_col = tv.plan.steps[-1].params.date_column
+
+    from app.services.period_compare import PeriodCompareError, period_comparison
+    snapshot = store.load_snapshot(sid)
+    try:
+        pc_scale = period_comparison(
+            snapshot, date_col, scale, "sum", "mom"
+        )
+        pc_profit = period_comparison(
+            snapshot, date_col, profit, "sum", "mom"
+        )
+    except PeriodCompareError:
+        return None
+    if pc_scale is None or pc_profit is None:
+        return None
+
+    gs = pc_scale.get("growth_pct")
+    gp = pc_profit.get("growth_pct")
+    scale_ok = gs is not None and gs / 100.0 >= MIN_SCALE_GROWTH
+    p_status = pc_profit.get("status") or ""
+    profit_ok = (
+        gp is not None and gp / 100.0 <= -MIN_PROFIT_DECLINE
+    ) or "由盈转亏" in p_status or (
+        "亏损扩大" in p_status and scale_ok
+    )
+    if not (scale_ok and profit_ok):
+        return None
+
+    evidence = [tv.view_id]
+    contrib_text = ""
+    cv = next(
+        (v for v in views.values()
+         if v.type is ViewType.contribution
+         and v.metric_fields and v.metric_fields[0] == profit),
+        None,
+    )
+    if cv is not None:
+        cdf = _load(store, sid, cv.view_id)
+        evidence.append(cv.view_id)
+        if not cdf.empty and "delta" in cdf.columns:
+            cdim = cv.dimension_fields[0]
+            row = cdf.sort_values("delta").iloc[0]
+            contrib_text = (
+                f"会计拆解（非因果）：按「{cdim}」，成员「{row[cdim]}」"
+                f"对{profit}变化的贡献最大（{float(row['delta']):+,.0f}），"
+                f"应优先核查；"
+            )
+
+    crossed = "由盈转亏" in p_status or "亏损扩大" in p_status
+    scale_txt = f"{gs:.1f}%" if gs is not None else "显著增长"
+    profit_txt = f"{gp:.1f}%" if gp is not None else p_status
+    finding = Finding(
+        finding_id="",
+        title=(
+            f"增收不增利：{scale}增长 {scale_txt}，"
+            f"但{profit}下降 {profit_txt}"
+        ),
+        summary=(
+            f"现象：规模与盈利方向背离，{scale}增长但{profit}反而下降。"
+            f"位置：{pc_profit['compare_label']} → {pc_profit['current_label']}"
+            f"（月环比等长窗口口径）。"
+            f"量化影响：{scale} {_fmt_num(float(pc_scale['previous_value']))}"
+            f" → {_fmt_num(float(pc_scale['current_value']))}；"
+            f"{profit} {_fmt_num(float(pc_profit['previous_value']))}"
+            f" → {_fmt_num(float(pc_profit['current_value']))}，"
+            f"单位规模盈利能力下降，若趋势延续则规模越大利润侵蚀越多。"
+            f"{contrib_text}"
+            f"建议：核查折扣、渠道结构与成本费用，区分战略性投入与盈利漏损。"
+        ),
+        type="structure",
+        evidence_view_ids=sorted(set(evidence)),
+        importance="high" if crossed else "medium",
+    )
+    key = (profit, scope_tag, "mom", "scale_profit_divergence")
+    return finding, key
+
+
+def _detect_simpson(
+    sid: str, store: SessionStore,
+    views: dict[str, AnalysisView],
+    execution: BundleExecutionResult,
+    scope_tag: str,
+) -> list[tuple[Finding, tuple]]:
+    """各组率改善但整体率下降（T08 黄金案例 2 / Simpson 悖论）。"""
+    step_summaries = {
+        r.view_id: (r.steps[-1].summary if r.steps else {})
+        for r in execution.views
+    }
+    out: list[tuple[Finding, tuple]] = []
+    for v in views.values():
+        if v.type is not ViewType.rate_shift:
+            continue
+        if not v.dimension_fields or len(v.metric_fields) < 2:
+            continue
+        dim = v.dimension_fields[0]
+        num, den = v.metric_fields[0], v.metric_fields[1]
+        summ = step_summaries.get(v.view_id, {})
+        change_pp = summ.get("change_pp")
+        within_pp = summ.get("within_effect_pp")
+        mix_pp = summ.get("mix_effect_pp")
+        if change_pp is None or within_pp is None:
+            continue
+        # 整体显著下降，而组内率效应合计为正（各组普遍改善）
+        if float(change_pp) > -MIN_RATE_SHIFT_PP or float(within_pp) <= 0:
+            continue
+
+        rdf = _load(store, sid, v.view_id)
+        driver_text = ""
+        if not rdf.empty and "mix" in rdf.columns:
+            row = rdf.sort_values("mix").iloc[0]
+            driver_text = (
+                f"最大结构拖累来自「{row[dim]}」：其{den}权重变化产生 "
+                f"{float(row['mix']) * 100:+.1f}pp；"
+            )
+
+        R0 = summ.get("base_overall_rate")
+        R1 = summ.get("current_overall_rate")
+        rate_text = (
+            f"整体率 {float(R0) * 100:.1f}% → {float(R1) * 100:.1f}%；"
+            if R0 is not None and R1 is not None else ""
+        )
+        finding = Finding(
+            finding_id="",
+            title=(
+                f"结构悖论：各「{dim}」组 {num}/{den} 普遍改善，"
+                f"整体率反而下降 {abs(float(change_pp)):.1f}pp"
+            ),
+            summary=(
+                f"现象：整体率下降并非各组恶化——组内率效应合计 "
+                f"{float(within_pp):+.1f}pp（各组普遍改善），"
+                f"但结构权重效应 {float(mix_pp):+.1f}pp 抵消并超过改善。"
+                f"位置：{rate_text}高率组权重下降、低率组权重上升。"
+                f"量化影响：{driver_text}若只看整体率会错误判定业务全面恶化。"
+                f"建议：核查高率组的流量/供给为何收缩，"
+                f"低率组放量是否符合当前策略。"
+            ),
+            type="structure",
+            evidence_view_ids=[v.view_id],
+            importance="high" if abs(float(change_pp)) >= 5.0 else "medium",
+        )
+        key = (f"{num}~{den}", scope_tag, "mom", f"simpson:{dim}")
+        out.append((finding, key))
+    return out
+
+
 # ----------------------------------------------------------------- 协议与编排
 
 class FindingsDetector(Protocol):
@@ -547,6 +722,17 @@ def detect_findings(
         )
         if risk:
             raw.append(risk)
+
+    # T08：跨指标信号（增收不增利 / Simpson 结构悖论）
+    spd = _detect_scale_profit_divergence(
+        session_id, store, views, dictionary, scope_tag
+    )
+    if spd:
+        raw.append(spd)
+    raw.extend(_detect_simpson(
+        session_id, store, views, execution, scope_tag
+    ))
+
     raw.extend(_detect_relationship(
         session_id, store, views, execution, scope_tag
     ))

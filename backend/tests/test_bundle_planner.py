@@ -33,7 +33,7 @@ GOLDEN = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))["datasets"]
 ALLOWED_OPS = {
     "filter", "aggregate", "group_by", "top_n", "share", "time_series",
     "compare_period", "correlation", "outlier_flag", "join_lookup",
-    "derive_ratio",
+    "derive_ratio", "contribution", "rate_decomposition",
 }
 
 
@@ -70,7 +70,7 @@ def test_bundle_view_count_and_coverage(name: str, tmp_path: Path):
     assert any(v.type is ViewType.overview for v in presentation)
     if dictionary.date_fields():
         assert any(v.type is ViewType.trend for v in presentation)
-    assert len(views) <= 10, f"{name} 总 View 不应超过 10，实际 {len(views)}"
+    assert len(views) <= 12, f"{name} 总 View 不应超过 12，实际 {len(views)}"
     # view_id 唯一、按序编号
     assert [v.view_id for v in views] == [f"view_{i:02d}" for i in range(1, len(views) + 1)]
     # 所有 View 都有可解释的选择理由（可解释性）

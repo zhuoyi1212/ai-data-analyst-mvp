@@ -31,6 +31,8 @@ from app.schemas.plan import (
     AggregateParams,
     AggregateStep,
     AnalysisPlan,
+    ContributionParams,
+    ContributionStep,
     CorrelationParams,
     CorrelationStep,
     DeriveRatioParams,
@@ -39,6 +41,8 @@ from app.schemas.plan import (
     GroupByStep,
     OutlierFlagParams,
     OutlierFlagStep,
+    RateDecompositionParams,
+    RateDecompositionStep,
     ShareParams,
     ShareStep,
     TimeSeriesParams,
@@ -344,6 +348,35 @@ def _step(op: str, hint: dict[str, Any], fields: list[str]):
         return DeriveRatioStep(
             step_id="derive_ratio", op="derive_ratio", params=p,
             description=f"确定性派生比率「{p.numerator}」÷「{p.denominator}」{axis}",
+        )
+    if op == "contribution":
+        p = ContributionParams(
+            date_column=hint["date_column"],
+            metric=hint["metric"],
+            dimension=hint["dimension"],
+            func=hint.get("func", "sum"),
+            period=hint.get("period", "mom"),
+        )
+        return ContributionStep(
+            step_id="contribution", op="contribution", params=p,
+            description=(
+                f"「{p.metric}」按「{p.dimension}」的变化贡献（会计恒等式回算）"
+            ),
+        )
+    if op == "rate_decomposition":
+        p = RateDecompositionParams(
+            date_column=hint["date_column"],
+            numerator=hint["numerator"],
+            denominator=hint["denominator"],
+            dimension=hint["dimension"],
+            period=hint.get("period", "mom"),
+        )
+        return RateDecompositionStep(
+            step_id="rate_decomposition", op="rate_decomposition", params=p,
+            description=(
+                f"「{p.numerator}/{p.denominator}」按「{p.dimension}」"
+                f"的率结构变化（within+mix+interaction）"
+            ),
         )
     raise ValueError(f"离线降级不支持算子: {op}")
 

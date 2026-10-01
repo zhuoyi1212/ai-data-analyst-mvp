@@ -32,8 +32,8 @@ def test_bundle_generate_and_execute(api_store, tmp_path: Path):
     resp = client.post(f"/sessions/{sid}/analysis-bundle")
     assert resp.status_code == 200, resp.text
     bundle = resp.json()
-    # T07：Seed 3-5 个 presentation，加上 computation 证据任务总数 ≤ 10
-    assert 3 <= len(bundle["analysis_views"]) <= 10
+    # T08：Seed 3-5 个 presentation，加上 computation 证据任务总数 ≤ 12
+    assert 3 <= len(bundle["analysis_views"]) <= 12
     assert 3 <= sum(
         v["role"] == "presentation" for v in bundle["analysis_views"]
     ) <= 5

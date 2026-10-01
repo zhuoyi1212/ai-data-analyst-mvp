@@ -41,6 +41,16 @@ OP_META: dict[str, dict] = {
         "terminal": True,
         "chart": ChartType.bar,  # 无轴单值由调用方按 KPI 取用；维度/时间序列为柱状/折线口径
     },
+    "contribution": {
+        "label": "分组变化贡献",
+        "terminal": True,
+        "chart": ChartType.table,  # 第一版以可回算的分解表呈现（未来可扩展瀑布图）
+    },
+    "rate_decomposition": {
+        "label": "率结构变化分解",
+        "terminal": True,
+        "chart": ChartType.table,
+    },
 }
 
 # 末端算子（除 filter 透传外的所有算子）→ 图表类型
@@ -86,6 +96,10 @@ def step_columns(step: PlanStep) -> list[str]:
         if p.date_column:
             cols.append(p.date_column)
         return cols
+    if step.op == "contribution":
+        return [p.date_column, p.metric, p.dimension]
+    if step.op == "rate_decomposition":
+        return [p.date_column, p.numerator, p.denominator, p.dimension]
     return []
 
 
@@ -167,6 +181,20 @@ def validate_plan_against_fields(
                         f"步骤 {step.step_id} 的日期字段「{p.date_column}」不是已确认的日期字段。"
                     )
 
+        if step.op == "contribution":
+            _check_date_dim_metric(
+                errors, available, step.step_id,
+                date_col=p.date_column, dim=p.dimension, metric=p.metric,
+            )
+
+        if step.op == "rate_decomposition":
+            _check_date_dim_metric(
+                errors, available, step.step_id,
+                date_col=p.date_column, dim=p.dimension, metric=None,
+            )
+            _require_metric(errors, available, p.numerator, step.step_id)
+            _require_metric(errors, available, p.denominator, step.step_id)
+
         if step.op == "filter":
             if p.operator in _LIST_FILTER_OPS:
                 if not isinstance(p.value, list) or len(p.value) == 0:
@@ -187,6 +215,25 @@ def _require_metric(
     f = available.get(col)
     if f and f.semantic_type != SemanticType.metric:
         errors.append(f"步骤 {step_id} 的指标字段「{col}」不是已确认的指标类型字段。")
+
+
+def _check_date_dim_metric(
+    errors: list[str], available: dict[str, FieldInfo], step_id: str,
+    *, date_col: str, dim: str, metric: str | None,
+) -> None:
+    """T08 分解算子共用的语义校验：日期/维度/指标字段类型门禁。"""
+    f = available.get(date_col)
+    if f and f.semantic_type != SemanticType.date:
+        errors.append(
+            f"步骤 {step_id} 的日期字段「{date_col}」不是已确认的日期字段。"
+        )
+    d = available.get(dim)
+    if d and d.semantic_type not in DIMENSION_SEMANTICS:
+        errors.append(
+            f"步骤 {step_id} 的分组字段「{dim}」不是维度类型字段。"
+        )
+    if metric:
+        _require_metric(errors, available, metric, step_id)
 
 
 def terminal_chart(plan: AnalysisPlan) -> ChartType:

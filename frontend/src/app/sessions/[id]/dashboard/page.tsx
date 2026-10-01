@@ -56,6 +56,25 @@ const IMPORTANCE_TONE: Record<string, "red" | "amber" | "neutral"> = {
   low: "neutral",
 };
 
+const IMPORTANCE_LABEL: Record<string, string> = {
+  high: "高",
+  medium: "中",
+  low: "低",
+};
+
+// Finding 类型中文标签（后端新增类型时在此补；未命中回退原值）
+const FINDING_TYPE_LABEL: Record<string, string> = {
+  structure: "结构",
+  risk: "风险",
+  relationship: "关联",
+  growth: "增长",
+  decline: "下滑",
+  anomaly: "异常",
+  trend: "趋势",
+  comparison: "对比",
+  opportunity: "机会",
+};
+
 function fmtValue(value: number, unit: string) {
   if (unit === "%") return `${(value * 100).toFixed(1)}%`;
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -190,10 +209,12 @@ export default function WorkbenchPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [viewingHistory, setViewingHistory] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
+  const [highlightedView, setHighlightedView] = useState<string | null>(null);
 
-  // 切换运行版本时折叠隐藏分析区
+  // 切换运行版本时折叠隐藏分析区、清除证据高亮
   useEffect(() => {
     setShowHidden(false);
+    setHighlightedView(null);
   }, [artifact?.run_id]);
 
   const loadInitial = useCallback(async () => {
@@ -257,6 +278,21 @@ export default function WorkbenchPage() {
   );
 
   const clearFilters = useCallback(() => applyFilters([]), [applyFilters]);
+
+  // 从 Finding 跳到证据视图：自动展开隐藏分析区 → 滚动定位 → 短暂高亮
+  const jumpToEvidence = useCallback((viewId: string) => {
+    setShowHidden(true);
+    window.setTimeout(() => {
+      const el = document.getElementById(`evidence-${viewId}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedView(viewId);
+      window.setTimeout(
+        () => setHighlightedView((cur) => (cur === viewId ? null : cur)),
+        2000,
+      );
+    }, 60);
+  }, []);
 
   const openHistory = useCallback(async () => {
     setShowHistory(true);
@@ -466,11 +502,15 @@ export default function WorkbenchPage() {
                         const card = artifact.views[vid];
                         if (!card) return null;
                         return (
-                          <ChartCardBlock
+                          <div
                             key={vid}
-                            card={card}
-                            runId={artifact.run_id}
-                          />
+                            id={`evidence-${vid}`}
+                            className={`scroll-mt-6 rounded-lg transition-shadow ${
+                              highlightedView === vid ? "ring-2 ring-accent" : ""
+                            }`}
+                          >
+                            <ChartCardBlock card={card} runId={artifact.run_id} />
+                          </div>
                         );
                       })}
                     </div>
@@ -503,7 +543,15 @@ export default function WorkbenchPage() {
                     {Object.values(artifact.views)
                       .filter((c) => c.default_hidden)
                       .map((card) => (
-                        <div key={card.view_id}>
+                        <div
+                          key={card.view_id}
+                          id={`evidence-${card.view_id}`}
+                          className={`scroll-mt-6 rounded-lg transition-shadow ${
+                            highlightedView === card.view_id
+                              ? "ring-2 ring-accent"
+                              : ""
+                          }`}
+                        >
                           {card.hide_reasons.length > 0 && (
                             <p className="mb-2 text-xs text-zinc-400">
                               隐藏原因：{card.hide_reasons.join("；")}
@@ -528,16 +576,36 @@ export default function WorkbenchPage() {
                   <Card key={f.finding_id}>
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge tone={IMPORTANCE_TONE[f.importance] ?? "neutral"}>
-                        {f.importance}
+                        {IMPORTANCE_LABEL[f.importance] ?? f.importance}
                       </Badge>
                       <h3 className="text-sm font-semibold text-zinc-800">
                         {f.title}
                       </h3>
-                      <span className="text-xs text-zinc-400">{f.type}</span>
+                      <span className="text-xs text-zinc-400">
+                        {FINDING_TYPE_LABEL[f.type] ?? f.type}
+                      </span>
                     </div>
                     <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600">
                       {f.summary}
                     </p>
+                    {f.evidence_view_ids.length > 0 && (
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span className="text-xs text-zinc-400">证据：</span>
+                        {f.evidence_view_ids.map((vid) => {
+                          const evCard = artifact.views[vid];
+                          if (!evCard) return null;
+                          return (
+                            <button
+                              key={vid}
+                              onClick={() => jumpToEvidence(vid)}
+                              className="text-xs text-accent underline-offset-2 hover:underline"
+                            >
+                              {evCard.title}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </Card>
                 ))
               )}

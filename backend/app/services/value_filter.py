@@ -70,6 +70,10 @@ def _family_signature(view: AnalysisView) -> tuple:
         return ("trend", metric)
     if t is ViewType.anomaly:
         return ("anom", metric)
+    if t is ViewType.contribution:
+        return ("contrib", dim, metric)
+    if t is ViewType.rate_shift:
+        return ("rateshift", dim, tuple(view.metric_fields))
     return (t.value, dim, metric)
 
 
@@ -96,6 +100,15 @@ def _impact_score(view: AnalysisView, er: ViewExecutionResult, summary: dict) ->
         count = int(summary.get("outlier_count", 0))
         rate = float(summary.get("outlier_rate", 0.0))
         return min(1.0, count / 10.0 + rate * 5.0)
+    if t is ViewType.contribution:
+        # 相对变化强度：20% 变化即满分；基期为 0 时只看是否有绝对变化
+        base = abs(float(summary.get("total_base_value", 0.0)))
+        delta = abs(float(summary.get("total_delta", 0.0)))
+        rel = delta / base if base > 1e-9 else (1.0 if delta > 1e-9 else 0.0)
+        return min(rel / 0.20, 1.0) if rel else 0.2
+    if t is ViewType.rate_shift:
+        pp = abs(float(summary.get("change_pp", 0.0)))  # 整体率变化（百分点）
+        return min(pp / 5.0, 1.0) if pp else 0.2
     metric = view.metric_fields[0] if view.metric_fields else ""
     return max(0.25, _metric_score(metric) / 4.0)
 
@@ -179,6 +192,21 @@ def filter_run(
             count = summary.get("outlier_count")
             if count is not None and int(count) == 0:
                 reasons.append("未发现离群值，默认不展示")
+        if view.type is ViewType.contribution:
+            base = summary.get("total_base_value")
+            delta = summary.get("total_delta")
+            if delta is not None and abs(float(delta)) <= 1e-9:
+                reasons.append("总指标无变化，默认不展示")
+            elif (
+                base is not None and delta is not None
+                and abs(float(base)) > 1e-9
+                and abs(float(delta)) / abs(float(base)) < 0.05
+            ):
+                reasons.append("总指标环比变化不足 5%，信号不显著，默认不展示")
+        if view.type is ViewType.rate_shift:
+            pp = summary.get("change_pp")
+            if pp is not None and abs(float(pp)) < 1.0:
+                reasons.append("整体率变化不足 1 个百分点，默认不展示")
 
         if prior_family is None and er.consumable:
             seen_families[sig] = view.title

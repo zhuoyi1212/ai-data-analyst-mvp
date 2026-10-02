@@ -540,6 +540,80 @@ class SessionStore:
             raise StorageError(f"探针结果不存在：{probe_id}")
         return pd.read_parquet(path)
 
+    # ---- Diagnostic Search（T09）：产物隔离 runs/{id}/diagnostic/，
+    #      与 dashboard 的 probes/（MAX_PROBES=3）目录与计数双隔离 ----
+    def diagnostic_dir(self, session_id: str) -> Path:
+        return self.active_run_dir(session_id) / "diagnostic"
+
+    def has_diagnostic(self, session_id: str) -> bool:
+        try:
+            return (self.diagnostic_dir(session_id) / "search.json").exists()
+        except StorageError:
+            return False
+
+    def write_diagnostic(self, session_id: str, payload: Any) -> Path:
+        """search 状态原子替换；每个 probe 后立即落盘，作为恢复时唯一事实。"""
+        d = self.diagnostic_dir(session_id)
+        d.mkdir(parents=True, exist_ok=True)
+        tmp = d / ".search.tmp"
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        path = d / "search.json"
+        os.replace(tmp, path)
+        return path
+
+    def read_diagnostic(self, session_id: str) -> Any:
+        path = self.diagnostic_dir(session_id) / "search.json"
+        if not path.exists():
+            raise StorageError("尚未发起诊断搜索（DiagnosticSearch）。")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _diagnostic_probe_dir(self, session_id: str, probe_id: str) -> Path:
+        safe = Path(probe_id).name
+        if safe != probe_id or not safe:
+            raise StorageError(f"非法的探针标识：{probe_id}")
+        d = self.diagnostic_dir(session_id) / "probes" / safe
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def write_diagnostic_probe_plan(
+        self, session_id: str, probe_id: str, plan_key: str, payload: Any
+    ) -> Path:
+        path = (
+            self._diagnostic_probe_dir(session_id, probe_id)
+            / f"plan_{plan_key}.json"
+        )
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        return path
+
+    def save_diagnostic_probe_result(
+        self, session_id: str, probe_id: str, plan_key: str,
+        df: pd.DataFrame,
+    ) -> None:
+        normalize_mixed_columns(df).to_parquet(
+            self._diagnostic_probe_dir(session_id, probe_id)
+            / f"result_{plan_key}.parquet",
+            index=False,
+        )
+
+    def write_diagnostic_probe_ledger(
+        self, session_id: str, probe_id: str, plan_key: str, payload: Any
+    ) -> Path:
+        path = (
+            self._diagnostic_probe_dir(session_id, probe_id)
+            / f"ledger_{plan_key}.json"
+        )
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        return path
+
     def load_original(self, session_id: str) -> pd.DataFrame:
         """重新解析原始上传文件，返回 DataFrame。"""
         meta = self.get_meta(session_id)

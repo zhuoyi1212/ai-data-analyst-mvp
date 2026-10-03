@@ -30,10 +30,10 @@ import { ViewChartCard } from "@/components/dashboard/DashboardChart";
 function ChartCardBlock({ card, runId }: { card: ViewCard; runId: string }) {
   return (
     <Card>
-      <div className="mb-3 flex items-start justify-between gap-2">
+      <div className="mb-4 flex items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-zinc-800">{card.title}</h3>
-          <p className="mt-0.5 text-xs text-zinc-400">{card.question}</p>
+          <h3 className="text-sm font-semibold text-ink">{card.title}</h3>
+          <p className="mt-1 text-xs text-faint">{card.question}</p>
         </div>
         <Badge tone={card.validity === "pass" ? "green" : "amber"}>
           {card.validity}
@@ -44,7 +44,10 @@ function ChartCardBlock({ card, runId }: { card: ViewCard; runId: string }) {
   );
 }
 
-const STATE_META: Record<string, { label: string; tone: "green" | "amber" | "neutral" }> = {
+const STATE_META: Record<
+  string,
+  { label: string; tone: "green" | "amber" | "neutral" }
+> = {
   ready: { label: "就绪", tone: "green" },
   partial: { label: "部分视角不可用", tone: "amber" },
   empty: { label: "空态", tone: "neutral" },
@@ -83,25 +86,29 @@ function fmtValue(value: number, unit: string) {
 function KpiCard({ kpi }: { kpi: KPI }) {
   const positive = (kpi.change ?? 0) > 0;
   return (
-    <Card className="py-4">
-      <p className="text-xs text-zinc-400">{kpi.label}</p>
-      <p className="mt-1 text-xl font-semibold text-zinc-900">
+    <Card className="!p-5">
+      <p className="text-xs text-faint">{kpi.label}</p>
+      <p className="mt-2 text-[26px] font-semibold leading-none tracking-tight text-ink tabular-nums">
         {kpi.value === null ? (
-          <span className="text-zinc-300">—</span>
+          <span className="text-line">—</span>
         ) : (
           fmtValue(kpi.value, kpi.unit)
         )}
       </p>
       {kpi.change_status ? (
-        <p className="mt-1 text-xs text-zinc-500">{kpi.change_status}</p>
+        <p className="mt-2.5 text-xs text-muted">{kpi.change_status}</p>
       ) : kpi.change !== null ? (
-        <p className={`mt-1 text-xs ${positive ? "text-emerald-600" : "text-red-600"}`}>
+        <p
+          className={`mt-2.5 text-xs font-medium tabular-nums ${
+            positive ? "text-success" : "text-danger"
+          }`}
+        >
           {positive ? "▲" : "▼"} {(Math.abs(kpi.change) * 100).toFixed(1)}%
           {kpi.change_type ? ` · ${kpi.change_type}` : ""}
         </p>
       ) : null}
       {kpi.change_hint && (
-        <p className="mt-1 text-xs text-zinc-400">{kpi.change_hint}</p>
+        <p className="mt-1.5 text-xs text-faint">{kpi.change_hint}</p>
       )}
     </Card>
   );
@@ -136,7 +143,9 @@ function FilterBar({
       const cur = new Set(d[column] ?? []);
       if (cur.has(member)) cur.delete(member);
       else cur.add(member);
-      const all = artifact.global_filters.find((f) => f.column === column)?.members ?? [];
+      const all =
+        artifact.global_filters.find((f) => f.column === column)?.members ??
+        [];
       return { ...d, [column]: cur.size === 0 ? all : Array.from(cur) };
     });
   }
@@ -144,34 +153,45 @@ function FilterBar({
   function apply() {
     const filters = artifact.global_filters
       .map((f) => ({ column: f.column, values: draft[f.column] ?? [] }))
-      .filter((f) => f.values.length > 0 && f.values.length < (
-        artifact.global_filters.find((x) => x.column === f.column)?.members.length ?? 0
-      ));
+      .filter(
+        (f) =>
+          f.values.length > 0 &&
+          f.values.length <
+            (artifact.global_filters.find((x) => x.column === f.column)
+              ?.members.length ?? 0),
+      );
     onApply(filters);
   }
 
   if (!artifact.global_filters.length) {
     return (
-      <p className="text-sm text-zinc-400">当前数据没有可用的全局筛选维度。</p>
+      <p className="text-sm text-faint">
+        当前数据没有可用的全局筛选维度。
+      </p>
     );
   }
 
   return (
     <div>
-      <div className="space-y-3">
+      <div className="space-y-3.5">
         {artifact.global_filters.map((f) => (
-          <div key={f.column} className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="w-16 shrink-0 text-zinc-500">{f.label}</span>
+          <div
+            key={f.column}
+            className="flex flex-wrap items-center gap-2 text-sm"
+          >
+            <span className="w-14 shrink-0 text-xs font-medium text-muted">
+              {f.label}
+            </span>
             {f.members.map((m) => {
               const active = (draft[f.column] ?? f.members).includes(m);
               return (
                 <button
                   key={m}
                   onClick={() => toggle(f.column, m)}
-                  className={`rounded-full border px-3 py-0.5 text-xs transition-colors ${
+                  className={`rounded-full border px-3.5 py-1 text-xs transition-all active:scale-95 ${
                     active
-                      ? "border-accent bg-accent text-white"
-                      : "border-zinc-300 bg-white text-zinc-500"
+                      ? "border-apple bg-apple-soft font-medium text-apple"
+                      : "border-line bg-white text-muted hover:border-faint"
                   }`}
                 >
                   {m}
@@ -181,7 +201,7 @@ function FilterBar({
           </div>
         ))}
       </div>
-      <div className="mt-4 flex gap-2">
+      <div className="mt-5 flex gap-2.5">
         <Button onClick={apply} loading={busy}>
           应用筛选并重算
         </Button>
@@ -189,7 +209,7 @@ function FilterBar({
           清除筛选
         </Button>
       </div>
-      <p className="mt-2 text-xs text-zinc-400">
+      <p className="mt-3 text-xs text-faint">
         筛选会重新执行全部视角、KPI 与 Findings，不是在已有图表上简单隐藏。
       </p>
     </div>
@@ -237,7 +257,7 @@ export default function WorkbenchPage() {
 
   useEffect(() => {
     loadInitial().catch((e) =>
-      setError(e instanceof ApiError ? e.message : "工作台加载失败。")
+      setError(e instanceof ApiError ? e.message : "工作台加载失败。"),
     );
   }, [loadInitial]);
 
@@ -277,7 +297,10 @@ export default function WorkbenchPage() {
     [sessionId],
   );
 
-  const clearFilters = useCallback(() => applyFilters([]), [applyFilters]);
+  const clearFilters = useCallback(
+    () => applyFilters([]),
+    [applyFilters],
+  );
 
   // 从 Finding 跳到证据视图：自动展开隐藏分析区 → 滚动定位 → 短暂高亮
   const jumpToEvidence = useCallback((viewId: string) => {
@@ -301,7 +324,9 @@ export default function WorkbenchPage() {
         const { runs: rs } = await api.listRuns(sessionId);
         setRuns(rs);
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "历史运行加载失败。");
+        setError(
+          e instanceof ApiError ? e.message : "历史运行加载失败。",
+        );
       }
     }
   }, [runs.length, sessionId]);
@@ -315,7 +340,9 @@ export default function WorkbenchPage() {
         setArtifact(a);
         setViewingHistory(true);
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "历史版本加载失败。");
+        setError(
+          e instanceof ApiError ? e.message : "历史版本加载失败。",
+        );
       }
     },
     [sessionId],
@@ -328,14 +355,16 @@ export default function WorkbenchPage() {
       setArtifact(a);
       setViewingHistory(false);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "当前版本加载失败。");
+      setError(
+        e instanceof ApiError ? e.message : "当前版本加载失败。",
+      );
     }
   }, [sessionId]);
 
   if (!meta && !error) {
     return (
-      <main className="flex min-h-screen items-center justify-center text-zinc-400">
-        <Spinner />
+      <main className="flex min-h-screen items-center justify-center text-faint">
+        <Spinner className="h-6 w-6 text-apple" />
       </main>
     );
   }
@@ -343,280 +372,318 @@ export default function WorkbenchPage() {
   const stateMeta = artifact ? STATE_META[artifact.state] : null;
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-6">
-      <header className="mb-5 flex items-center justify-between">
-        <Link
-          href={`/sessions/${sessionId}`}
-          className="text-sm font-semibold text-zinc-900 hover:text-accent"
-        >
-          ← AI Data Analyst
-        </Link>
-        <div className="text-xs text-zinc-400">
-          {meta?.filename} · 自动分析工作台
+    <div className="min-h-screen">
+      <div className="glass-bar fixed inset-x-0 top-0 z-50 border-b border-hairline">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
+          <Link
+            href={`/sessions/${sessionId}`}
+            className="text-sm font-semibold text-ink transition-colors hover:text-apple"
+          >
+            ← AI Data Analyst
+          </Link>
+          <div className="truncate text-xs text-faint">
+            {meta?.filename} · 自动分析工作台
+          </div>
         </div>
-      </header>
+      </div>
 
-      <Card className="mb-5 flex flex-wrap items-center justify-between gap-3 py-4">
-        <div className="flex items-center gap-3">
-          <SectionTitle title="分析仪表盘" />
-          {stateMeta && <Badge tone={stateMeta.tone}>{stateMeta.label}</Badge>}
-          {artifact && (
-            <span className="text-xs text-zinc-400">
-              运行版本 {artifact.run_id.slice(0, 14)}
-            </span>
-          )}
-        </div>
-        <Button variant="secondary" onClick={openHistory}>
-          历史运行
-        </Button>
-      </Card>
-
-      {viewingHistory && (
-        <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-700">
-          <span>正在查看历史运行版本（只读）。</span>
-          <Button variant="secondary" className="px-3 py-1 text-xs" onClick={backToCurrent}>
-            返回当前版本
+      <main className="mx-auto max-w-6xl px-6 pb-10 pt-24">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight text-ink">
+              分析仪表盘
+            </h1>
+            {stateMeta && (
+              <Badge tone={stateMeta.tone}>{stateMeta.label}</Badge>
+            )}
+            {artifact && (
+              <span className="font-mono text-xs text-faint">
+                {artifact.run_id.slice(0, 14)}
+              </span>
+            )}
+          </div>
+          <Button variant="secondary" onClick={openHistory}>
+            历史运行
           </Button>
         </div>
-      )}
 
-      {stale && (
-        <div className="mb-4">
-          <ErrorBanner message={`${stale}\n可重新生成分析，或查看历史运行。`} />
-          <div className="mt-2 flex gap-2">
-            <Button onClick={runFullAnalysis} loading={!!busy}>
-              {busy || "重新生成自动分析"}
-            </Button>
-            <Button variant="secondary" onClick={openHistory}>
-              查看历史版本
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="mb-4">
-          <ErrorBanner message={error} onRetry={() => setError(null)} />
-        </div>
-      )}
-
-      {showHistory && (
-        <Card className="mb-5 py-4">
-          <SectionTitle title="历史运行" desc="选择一个已发布的运行版本查看（审计只读）。" />
-          <select
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-            defaultValue=""
-            onChange={(e) => selectHistoryRun(e.target.value)}
-          >
-            <option value="" disabled>
-              请选择运行版本…
-            </option>
-            {runs
-              .filter((r) => r.has_dashboard)
-              .map((r) => (
-                <option key={r.run_id} value={r.run_id}>
-                  {r.run_id} · {r.status} ·{" "}
-                  {r.scope.length
-                    ? `筛选 ${r.scope.map((s) => s.column).join("/")}`
-                    : "全量"}
-                </option>
-              ))}
-          </select>
-        </Card>
-      )}
-
-      {!artifact && !stale && (
-        <Card className="py-10 text-center">
-          <h2 className="text-lg font-semibold text-zinc-900">自动分析工作台</h2>
-          <p className="mx-auto mt-2 max-w-md text-sm text-zinc-500">
-            系统将先聚焦核心 KPI、对齐趋势与一个基准拆分；弱信号分析默认隐藏，
-            可按需展开。数值全部由确定性 pandas 引擎计算，LLM 不参与计算。
-          </p>
-          <div className="mt-6 flex justify-center">
-            <Button onClick={runFullAnalysis} loading={!!busy} className="px-8">
-              {busy || "开始自动分析"}
+        {viewingHistory && (
+          <div className="mb-5 flex items-center justify-between rounded-2xl border border-warning/20 bg-warning-soft px-5 py-3 text-sm text-warning">
+            <span>正在查看历史运行版本（只读）。</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={backToCurrent}
+            >
+              返回当前版本
             </Button>
           </div>
-          <p className="mt-4 text-xs text-zinc-400">
-            前置条件：已完成语义确认与数据质量处理。
-          </p>
-        </Card>
-      )}
+        )}
 
-      {artifact && (
-        <>
-          <Card className="mb-5 py-4">
-            <p className="mb-3 text-xs text-zinc-400">
-              分析范围：快照 {artifact.scope.snapshot_rows.toLocaleString()} 行 →
-              当前参与 {artifact.scope.participating_rows.toLocaleString()} 行
+        {stale && (
+          <div className="mb-5">
+            <ErrorBanner message={`${stale}\n可重新生成分析，或查看历史运行。`} />
+            <div className="mt-3 flex gap-2.5">
+              <Button onClick={runFullAnalysis} loading={!!busy}>
+                {busy || "重新生成自动分析"}
+              </Button>
+              <Button variant="secondary" onClick={openHistory}>
+                查看历史版本
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-5">
+            <ErrorBanner message={error} onRetry={() => setError(null)} />
+          </div>
+        )}
+
+        {showHistory && (
+          <Card className="mb-6">
+            <SectionTitle
+              title="历史运行"
+              desc="选择一个已发布的运行版本查看（审计只读）。"
+            />
+            <select
+              className="field-input"
+              defaultValue=""
+              onChange={(e) => selectHistoryRun(e.target.value)}
+            >
+              <option value="" disabled>
+                请选择运行版本…
+              </option>
+              {runs
+                .filter((r) => r.has_dashboard)
+                .map((r) => (
+                  <option key={r.run_id} value={r.run_id}>
+                    {r.run_id} · {r.status} ·{" "}
+                    {r.scope.length
+                      ? `筛选 ${r.scope.map((s) => s.column).join("/")}`
+                      : "全量"}
+                  </option>
+                ))}
+            </select>
+          </Card>
+        )}
+
+        {!artifact && !stale && (
+          <Card className="text-center">
+            <h2 className="text-3xl font-semibold tracking-tight text-ink">
+              自动分析工作台
+            </h2>
+            <p className="mx-auto mt-4 max-w-lg text-sm leading-relaxed text-muted">
+              系统将先聚焦核心 KPI、对齐趋势与一个基准拆分；弱信号分析默认隐藏，
+              可按需展开。数值全部由确定性 pandas 引擎计算，LLM 不参与计算。
             </p>
-            {!viewingHistory ? (
-              <FilterBar
-                artifact={artifact}
-                onApply={applyFilters}
-                onClear={clearFilters}
-                busy={!!busy}
+            <div className="mt-8 flex justify-center">
+              <Button
+                size="lg"
+                onClick={runFullAnalysis}
+                loading={!!busy}
+                className="min-w-48"
+              >
+                {busy || "开始自动分析"}
+              </Button>
+            </div>
+            <p className="mt-5 text-xs text-faint">
+              前置条件：已完成语义确认与数据质量处理。
+            </p>
+          </Card>
+        )}
+
+        {artifact && (
+          <>
+            <Card className="mb-6 bg-canvas">
+              <p className="mb-4 text-xs text-muted">
+                分析范围：快照{" "}
+                {artifact.scope.snapshot_rows.toLocaleString()} 行 →
+                当前参与{" "}
+                {artifact.scope.participating_rows.toLocaleString()} 行
+              </p>
+              {!viewingHistory ? (
+                <FilterBar
+                  artifact={artifact}
+                  onApply={applyFilters}
+                  onClear={clearFilters}
+                  busy={!!busy}
+                />
+              ) : (
+                <p className="text-sm text-faint">
+                  历史版本不支持重新筛选。
+                </p>
+              )}
+            </Card>
+
+            {artifact.failed_views.length > 0 && (
+              <div className="mb-6 space-y-2.5">
+                {artifact.failed_views.map((f) => (
+                  <div
+                    key={f.view_id}
+                    className="rounded-2xl border border-warning/20 bg-warning-soft px-5 py-3 text-sm text-warning"
+                  >
+                    视角不可用：{f.title}（{f.view_id}）— {f.reason}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {artifact.state === "empty" ? (
+              <EmptyState
+                title="当前筛选范围内没有有效数据"
+                desc="这不是错误；系统不会用 0 填充任何指标。请调整或清除筛选后重试。"
               />
             ) : (
-              <p className="text-sm text-zinc-400">历史版本不支持重新筛选。</p>
-            )}
-          </Card>
-
-          {artifact.failed_views.length > 0 && (
-            <div className="mb-5 space-y-2">
-              {artifact.failed_views.map((f) => (
-                <div
-                  key={f.view_id}
-                  className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-700"
-                >
-                  视角不可用：{f.title}（{f.view_id}）— {f.reason}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {artifact.state === "empty" ? (
-            <EmptyState
-              title="当前筛选范围内没有有效数据"
-              desc="这不是错误；系统不会用 0 填充任何指标。请调整或清除筛选后重试。"
-            />
-          ) : (
-            <>
-              {artifact.kpis.length > 0 && (
-                <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  {artifact.kpis.map((k) => (
-                    <KpiCard key={k.label} kpi={k} />
-                  ))}
-                </div>
-              )}
-
-              {artifact.sections
-                .filter((s) => s.view_ids.length > 0)
-                .map((section) => (
-                  <section key={section.section_id} className="mb-6">
-                    <h2 className="mb-3 text-base font-semibold text-zinc-900">
-                      {section.title}
-                    </h2>
-                    <div className="grid gap-4 lg:grid-cols-2">
-                      {section.view_ids.map((vid) => {
-                        const card = artifact.views[vid];
-                        if (!card) return null;
-                        return (
-                          <div
-                            key={vid}
-                            id={`evidence-${vid}`}
-                            className={`scroll-mt-6 rounded-lg transition-shadow ${
-                              highlightedView === vid ? "ring-2 ring-accent" : ""
-                            }`}
-                          >
-                            <ChartCardBlock card={card} runId={artifact.run_id} />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-                ))}
-            </>
-          )}
-
-          {Object.values(artifact.views).some((c) => c.default_hidden) && (
-            <section className="mb-6">
-              <button
-                onClick={() => setShowHidden((v) => !v)}
-                className="text-sm text-zinc-500 underline-offset-4 hover:text-accent hover:underline"
-              >
-                {showHidden
-                  ? "收起隐藏分析"
-                  : `显示隐藏分析（${
-                      Object.values(artifact.views).filter(
-                        (c) => c.default_hidden
-                      ).length
-                    }）`}
-              </button>
-              {showHidden && (
-                <div className="mt-3">
-                  <p className="mb-3 text-xs text-zinc-400">
-                    内部证据计算：弱相关、无异常或重复信息默认不占主视图，
-                    结果已保留，可在此核查。
-                  </p>
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    {Object.values(artifact.views)
-                      .filter((c) => c.default_hidden)
-                      .map((card) => (
-                        <div
-                          key={card.view_id}
-                          id={`evidence-${card.view_id}`}
-                          className={`scroll-mt-6 rounded-lg transition-shadow ${
-                            highlightedView === card.view_id
-                              ? "ring-2 ring-accent"
-                              : ""
-                          }`}
-                        >
-                          {card.hide_reasons.length > 0 && (
-                            <p className="mb-2 text-xs text-zinc-400">
-                              隐藏原因：{card.hide_reasons.join("；")}
-                            </p>
-                          )}
-                          <ChartCardBlock card={card} runId={artifact.run_id} />
-                        </div>
-                      ))}
+              <>
+                {artifact.kpis.length > 0 && (
+                  <div className="mb-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    {artifact.kpis.map((k) => (
+                      <KpiCard key={k.label} kpi={k} />
+                    ))}
                   </div>
-                </div>
-              )}
-            </section>
-          )}
+                )}
 
-          <section className="mb-6">
-            <h2 className="mb-3 text-base font-semibold text-zinc-900">关键发现</h2>
-            <div className="space-y-3">
-              {artifact.findings.length === 0 ? (
-                <p className="text-sm text-zinc-400">当前范围内未检测到显著信号。</p>
-              ) : (
-                artifact.findings.map((f) => (
-                  <Card key={f.finding_id}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone={IMPORTANCE_TONE[f.importance] ?? "neutral"}>
-                        {IMPORTANCE_LABEL[f.importance] ?? f.importance}
-                      </Badge>
-                      <h3 className="text-sm font-semibold text-zinc-800">
-                        {f.title}
-                      </h3>
-                      <span className="text-xs text-zinc-400">
-                        {FINDING_TYPE_LABEL[f.type] ?? f.type}
-                      </span>
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600">
-                      {f.summary}
-                    </p>
-                    {f.evidence_view_ids.length > 0 && (
-                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="text-xs text-zinc-400">证据：</span>
-                        {f.evidence_view_ids.map((vid) => {
-                          const evCard = artifact.views[vid];
-                          if (!evCard) return null;
+                {artifact.sections
+                  .filter((s) => s.view_ids.length > 0)
+                  .map((section) => (
+                    <section key={section.section_id} className="mb-7">
+                      <h2 className="mb-4 text-lg font-semibold tracking-tight text-ink">
+                        {section.title}
+                      </h2>
+                      <div className="grid gap-5 lg:grid-cols-2">
+                        {section.view_ids.map((vid) => {
+                          const card = artifact.views[vid];
+                          if (!card) return null;
                           return (
-                            <button
+                            <div
                               key={vid}
-                              onClick={() => jumpToEvidence(vid)}
-                              className="text-xs text-accent underline-offset-2 hover:underline"
+                              id={`evidence-${vid}`}
+                              className={`scroll-mt-24 rounded-4xl transition-shadow duration-500 ${
+                                highlightedView === vid
+                                  ? "shadow-pop ring-2 ring-apple"
+                                  : ""
+                              }`}
                             >
-                              {evCard.title}
-                            </button>
+                              <ChartCardBlock
+                                card={card}
+                                runId={artifact.run_id}
+                              />
+                            </div>
                           );
                         })}
                       </div>
-                    )}
-                  </Card>
-                ))
-              )}
-            </div>
-          </section>
-        </>
-      )}
+                    </section>
+                  ))}
+              </>
+            )}
 
-      <footer className="mt-8 text-center text-xs text-zinc-400">
-        所有数值均来自确定性计算引擎，LLM 不参与计算
-      </footer>
-    </main>
+            {Object.values(artifact.views).some((c) => c.default_hidden) && (
+              <section className="mb-7">
+                <button
+                  onClick={() => setShowHidden((v) => !v)}
+                  className="text-sm font-medium text-muted underline-offset-4 transition-colors hover:text-apple hover:underline"
+                >
+                  {showHidden
+                    ? "收起隐藏分析"
+                    : `显示隐藏分析（${
+                        Object.values(artifact.views).filter(
+                          (c) => c.default_hidden,
+                        ).length
+                      }）`}
+                </button>
+                {showHidden && (
+                  <div className="mt-4">
+                    <p className="mb-4 text-xs text-faint">
+                      内部证据计算：弱相关、无异常或重复信息默认不占主视图，
+                      结果已保留，可在此核查。
+                    </p>
+                    <div className="grid gap-5 lg:grid-cols-2">
+                      {Object.values(artifact.views)
+                        .filter((c) => c.default_hidden)
+                        .map((card) => (
+                          <div
+                            key={card.view_id}
+                            id={`evidence-${card.view_id}`}
+                            className={`scroll-mt-24 rounded-4xl transition-shadow duration-500 ${
+                              highlightedView === card.view_id
+                                ? "shadow-pop ring-2 ring-apple"
+                                : ""
+                            }`}
+                          >
+                            {card.hide_reasons.length > 0 && (
+                              <p className="mb-2 text-xs text-faint">
+                                隐藏原因：{card.hide_reasons.join("；")}
+                              </p>
+                            )}
+                            <ChartCardBlock
+                              card={card}
+                              runId={artifact.run_id}
+                            />
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            <section className="mb-8">
+              <h2 className="mb-4 text-lg font-semibold tracking-tight text-ink">
+                关键发现
+              </h2>
+              <div className="space-y-4">
+                {artifact.findings.length === 0 ? (
+                  <p className="text-sm text-faint">
+                    当前范围内未检测到显著信号。
+                  </p>
+                ) : (
+                  artifact.findings.map((f) => (
+                    <Card key={f.finding_id}>
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <Badge tone={IMPORTANCE_TONE[f.importance] ?? "neutral"}>
+                          {IMPORTANCE_LABEL[f.importance] ?? f.importance}
+                        </Badge>
+                        <h3 className="text-sm font-semibold text-ink">
+                          {f.title}
+                        </h3>
+                        <span className="text-xs text-faint">
+                          {FINDING_TYPE_LABEL[f.type] ?? f.type}
+                        </span>
+                      </div>
+                      <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted">
+                        {f.summary}
+                      </p>
+                      {f.evidence_view_ids.length > 0 && (
+                        <div className="mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                          <span className="text-xs text-faint">证据：</span>
+                          {f.evidence_view_ids.map((vid) => {
+                            const evCard = artifact.views[vid];
+                            if (!evCard) return null;
+                            return (
+                              <button
+                                key={vid}
+                                onClick={() => jumpToEvidence(vid)}
+                                className="text-xs font-medium text-apple underline-offset-2 hover:underline"
+                              >
+                                {evCard.title}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </Card>
+                  ))
+                )}
+              </div>
+            </section>
+          </>
+        )}
+
+        <footer className="mt-10 text-center text-xs text-faint">
+          所有数值均来自确定性计算引擎，LLM 不参与计算
+        </footer>
+      </main>
+    </div>
   );
 }

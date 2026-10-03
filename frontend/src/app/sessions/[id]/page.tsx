@@ -5,9 +5,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import type { Preview, SessionMeta } from "@/lib/types";
-import { stepIndexFromBackendStage, WORKFLOW_STEPS } from "@/lib/workflow";
+import { stepIndexFromBackendStage } from "@/lib/workflow";
 import { Stepper } from "@/components/Stepper";
-import { Card, ErrorBanner, Spinner } from "@/components/ui";
+import { ErrorBanner, Spinner } from "@/components/ui";
 import { DataPreviewCard, DataPreviewTable } from "@/components/DataPreview";
 import { ProfilePanel } from "@/components/panels/ProfilePanel";
 import { QualityPanel } from "@/components/panels/QualityPanel";
@@ -60,10 +60,10 @@ export default function SessionPage() {
 
   if (fatal) {
     return (
-      <main className="mx-auto max-w-3xl px-6 py-20">
+      <main className="mx-auto max-w-3xl px-6 py-28">
         <ErrorBanner message={fatal} />
-        <div className="mt-4">
-          <Link href="/" className="text-sm text-accent hover:underline">
+        <div className="mt-5">
+          <Link href="/" className="link-apple text-sm">
             ← 返回上传新数据
           </Link>
         </div>
@@ -73,8 +73,8 @@ export default function SessionPage() {
 
   if (!meta) {
     return (
-      <main className="flex min-h-screen items-center justify-center text-zinc-400">
-        <Spinner />
+      <main className="flex min-h-screen items-center justify-center text-muted">
+        <Spinner className="h-7 w-7 text-apple" />
       </main>
     );
   }
@@ -88,55 +88,78 @@ export default function SessionPage() {
   };
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-6">
-      <header className="mb-5 flex items-center justify-between">
-        <Link href="/" className="text-sm font-semibold text-zinc-900 hover:text-accent">
-          AI Data Analyst
-        </Link>
-        <div className="flex items-center gap-4 text-xs text-zinc-400">
+    <div className="min-h-screen bg-white">
+      {/* ------------------------------------------------ 顶部导航 */}
+      <header className="glass-bar sticky top-0 z-40">
+        <div className="mx-auto flex h-12 max-w-6xl items-center justify-between px-6">
           <Link
-            href={`/sessions/${sessionId}/dashboard`}
-            className="text-accent hover:underline"
+            href="/"
+            className="text-sm font-semibold tracking-tight text-ink transition-colors hover:text-apple"
           >
-            自动分析工作台 →
+            AI Data Analyst
           </Link>
-          <span>
-            {meta?.filename} · {meta?.shape.rows.toLocaleString()} 行 × {meta?.shape.cols} 列
-          </span>
+          <div className="flex items-center gap-5 text-xs text-muted">
+            <Link
+              href={`/sessions/${sessionId}/dashboard`}
+              className="font-medium text-apple hover:text-apple-hover"
+            >
+              自动分析工作台 →
+            </Link>
+            <span className="hidden sm:inline">
+              {meta.filename} · {meta.shape.rows.toLocaleString()} 行 ×{" "}
+              {meta.shape.cols} 列
+            </span>
+          </div>
         </div>
       </header>
 
-      <Card className="mb-5 overflow-x-auto py-4">
-        <Stepper current={view} reached={reached} onJump={setView} />
-      </Card>
-
-      {error && (
-        <div className="mb-4">
-          <ErrorBanner message={error} onRetry={() => setError(null)} />
+      <main className="mx-auto max-w-6xl px-6 py-8">
+        <div className="animate-fade-up">
+          <Stepper current={view} reached={reached} onJump={setView} />
         </div>
-      )}
 
-      {view === 1 && <ProfilePanel {...panelProps} />}
-      {view === 2 && <QualityPanel {...panelProps} />}
-      {view === 3 && <QuestionsPanel {...panelProps} />}
-      {view === 4 && <PlanPanel {...panelProps} />}
-      {view === 5 && <RunPanel {...panelProps} />}
-      {view === 6 && <InsightPanel {...panelProps} />}
+        <div className="mt-6 animate-fade-up" style={{ animationDelay: "80ms" }}>
+          {error && (
+            <div className="mb-5">
+              <ErrorBanner message={error} onRetry={() => setError(null)} />
+            </div>
+          )}
 
-      {view === 0 && preview && <DataPreviewCard preview={preview} />}
-      {view >= 1 && preview && (
-        <details className="mt-4 rounded-xl border border-zinc-200 bg-white px-5 py-3 text-sm">
-          <summary className="cursor-pointer text-zinc-500">查看原始数据前 10 行</summary>
-          <div className="mt-3">
-            <DataPreviewTable preview={preview} />
-          </div>
-        </details>
-      )}
+          {view === 1 && <ProfilePanel {...panelProps} />}
+          {view === 2 && <QualityPanel {...panelProps} />}
+          {view === 3 && <QuestionsPanel {...panelProps} />}
+          {view === 4 && <PlanPanel {...panelProps} />}
+          {view === 5 && <RunPanel {...panelProps} />}
+          {view === 6 && <InsightPanel {...panelProps} />}
 
-      <footer className="mt-8 text-center text-xs text-zinc-400">
-        当前阶段：{meta ? WORKFLOW_STEPS[view]?.label : "…"} ·
-        所有数值均来自确定性计算引擎，LLM 不参与计算
-      </footer>
-    </main>
+          {view === 0 && preview && <DataPreviewCard preview={preview} />}
+          {view >= 1 && preview && (
+            <details className="group mt-5 rounded-3xl bg-canvas px-6 py-4 text-sm">
+              <summary className="flex cursor-pointer list-none items-center justify-between text-muted transition-colors hover:text-ink">
+                <span className="font-medium">查看原始数据前 10 行</span>
+                <svg
+                  className="h-4 w-4 transition-transform duration-300 group-open:rotate-180"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M5 8l5 5 5-5" />
+                </svg>
+              </summary>
+              <div className="mt-4">
+                <DataPreviewTable preview={preview} />
+              </div>
+            </details>
+          )}
+        </div>
+
+        <footer className="mt-12 border-t border-hairline pt-6 text-center text-xs text-faint">
+          所有数值均来自确定性计算引擎，LLM 不参与计算。
+        </footer>
+      </main>
+    </div>
   );
 }

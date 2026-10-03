@@ -24,16 +24,43 @@ import { api, ApiError } from "@/lib/api";
 import type { ViewCard } from "@/lib/types";
 import { Spinner } from "@/components/ui";
 
-const ACCENT = "#2563eb";
+const ACCENT = "#0071e3";
+const GRID = "#f0f0f2";
+const AXIS = "#86868b";
+
+// Apple 系统色序列
 const PIE_COLORS = [
-  "#2563eb", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444",
-  "#8b5cf6", "#ec4899", "#14b8a6", "#f97316", "#6366f1",
+  "#0071e3",
+  "#7c4dff",
+  "#ff9500",
+  "#34c759",
+  "#ff3b30",
+  "#5ac8fa",
+  "#ff2d55",
+  "#af52de",
+  "#ffcc00",
+  "#64d2ff",
 ];
+
+const tooltipStyle = {
+  borderRadius: 14,
+  border: "1px solid #ebebed",
+  boxShadow: "0 8px 28px rgba(0,0,0,0.10)",
+  background: "rgba(255,255,255,0.92)",
+  backdropFilter: "blur(12px)",
+  fontSize: 12,
+  padding: "8px 12px",
+} as const;
+
+const axisProps = {
+  tick: { fontSize: 11, fill: AXIS },
+  tickLine: false,
+} as const;
 
 type Row = Record<string, string | number | null>;
 
 function ChartError({ message }: { message: string }) {
-  return <p className="py-6 text-center text-sm text-red-500">{message}</p>;
+  return <p className="py-6 text-center text-sm text-danger">{message}</p>;
 }
 
 function renderChart(card: ViewCard, rows: Row[]) {
@@ -45,66 +72,103 @@ function renderChart(card: ViewCard, rows: Row[]) {
     case "share_bar":
     case "grouped_bar":
       return (
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={rows} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
-            <XAxis dataKey={spec.x_field ?? undefined} tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} />
-            <Tooltip />
-            <Bar dataKey={spec.y_fields[0]} fill={ACCENT} radius={[3, 3, 0, 0]} />
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart
+            data={rows}
+            margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+          >
+            <CartesianGrid stroke={GRID} vertical={false} />
+            <XAxis
+              dataKey={spec.x_field ?? undefined}
+              {...axisProps}
+              axisLine={{ stroke: GRID }}
+            />
+            <YAxis {...axisProps} axisLine={false} />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              cursor={{ fill: "rgba(0,113,227,0.06)" }}
+            />
+            <Bar
+              dataKey={spec.y_fields[0]}
+              fill={ACCENT}
+              radius={[6, 6, 0, 0]}
+              maxBarSize={56}
+            />
           </BarChart>
         </ResponsiveContainer>
       );
     case "pie": {
-      const key = spec.y_fields.includes("share") ? "share" : spec.y_fields[0];
+      const key = spec.y_fields.includes("share")
+        ? "share"
+        : spec.y_fields[0];
       return (
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={320}>
           <PieChart>
             <Pie
               data={rows}
               dataKey={key}
               nameKey={spec.x_field ?? ""}
-              label={{ fontSize: 12 }}
+              outerRadius={118}
+              innerRadius={62}
+              paddingAngle={2}
+              stroke="none"
             >
               {rows.map((_, i) => (
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip />
+            <Tooltip contentStyle={tooltipStyle} />
           </PieChart>
         </ResponsiveContainer>
       );
     }
     case "line":
       return (
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={rows} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
-            <XAxis dataKey={spec.x_field ?? undefined} tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} />
-            <Tooltip />
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart
+            data={rows}
+            margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+          >
+            <CartesianGrid stroke={GRID} vertical={false} />
+            <XAxis
+              dataKey={spec.x_field ?? undefined}
+              {...axisProps}
+              axisLine={{ stroke: GRID }}
+              minTickGap={24}
+            />
+            <YAxis {...axisProps} axisLine={false} />
+            <Tooltip contentStyle={tooltipStyle} />
             <Line
               type="monotone"
               dataKey={spec.y_fields[0]}
               stroke={ACCENT}
-              strokeWidth={2}
+              strokeWidth={2.5}
               dot={false}
+              activeDot={{ r: 5, strokeWidth: 0 }}
             />
           </LineChart>
         </ResponsiveContainer>
       );
     case "scatter":
       return (
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={320}>
           <ScatterChart margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
+            <CartesianGrid stroke={GRID} />
             <XAxis
               dataKey={spec.x_field ?? ""}
               type="number"
-              tick={{ fontSize: 12 }}
+              {...axisProps}
+              axisLine={{ stroke: GRID }}
             />
-            <YAxis dataKey={spec.y_fields[0]} tick={{ fontSize: 12 }} />
-            <Tooltip cursor={{ strokeDasharray: "3 3" }} />
+            <YAxis
+              dataKey={spec.y_fields[0]}
+              {...axisProps}
+              axisLine={false}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              cursor={{ strokeDasharray: "3 3", stroke: AXIS }}
+            />
             <Scatter data={rows} fill={ACCENT} />
           </ScatterChart>
         </ResponsiveContainer>
@@ -128,7 +192,11 @@ function PagedTable({ card }: { card: ViewCard }) {
     setLoading(true);
     setError("");
     try {
-      const res = await api.getViewRows(envelope.data_ref, next, meta?.page_size ?? 50);
+      const res = await api.getViewRows(
+        envelope.data_ref,
+        next,
+        meta?.page_size ?? 50,
+      );
       setRows(res.rows);
       setPage(res.page?.page ?? next);
     } catch (e) {
@@ -143,9 +211,9 @@ function PagedTable({ card }: { card: ViewCard }) {
       <div className="relative overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead>
-            <tr className="border-b border-zinc-200 text-zinc-500">
+            <tr className="border-b border-hairline text-muted">
               {envelope.columns.map((c) => (
-                <th key={c.name} className="py-2 pr-4 font-medium">
+                <th key={c.name} className="py-2.5 pr-4 font-medium">
                   {c.label}
                 </th>
               ))}
@@ -153,11 +221,14 @@ function PagedTable({ card }: { card: ViewCard }) {
           </thead>
           <tbody>
             {rows.map((row, i) => (
-              <tr key={i} className="border-b border-zinc-100">
+              <tr
+                key={i}
+                className="border-b border-hairline/70 even:bg-canvas/30"
+              >
                 {envelope.columns.map((c) => (
-                  <td key={c.name} className="py-1.5 pr-4 text-zinc-700">
+                  <td key={c.name} className="py-2 pr-4 text-ink/75">
                     {row[c.name] === null ? (
-                      <span className="text-zinc-300">—</span>
+                      <span className="text-faint">—</span>
                     ) : (
                       String(row[c.name])
                     )}
@@ -168,27 +239,28 @@ function PagedTable({ card }: { card: ViewCard }) {
           </tbody>
         </table>
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/60 text-zinc-400">
-            <Spinner className="h-5 w-5" />
+          <div className="absolute inset-0 flex items-center justify-center bg-white/70 backdrop-blur-sm">
+            <Spinner className="h-5 w-5 text-apple" />
           </div>
         )}
       </div>
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
       {meta && (
-        <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
+        <div className="mt-4 flex items-center justify-between text-xs text-muted">
           <span>
-            共 {meta.total_rows.toLocaleString()} 行 · 第 {page}/{meta.total_pages} 页
+            共 {meta.total_rows.toLocaleString()} 行 · 第 {page}/
+            {meta.total_pages} 页
           </span>
           <span className="flex gap-2">
             <button
-              className="rounded border border-zinc-300 px-2 py-1 disabled:opacity-40"
+              className="rounded-full border border-line px-3.5 py-1 transition-colors hover:bg-canvas disabled:opacity-40"
               disabled={page <= 1 || loading}
               onClick={() => goto(page - 1)}
             >
               上一页
             </button>
             <button
-              className="rounded border border-zinc-300 px-2 py-1 disabled:opacity-40"
+              className="rounded-full border border-line px-3.5 py-1 transition-colors hover:bg-canvas disabled:opacity-40"
               disabled={page >= meta.total_pages || loading}
               onClick={() => goto(page + 1)}
             >
@@ -205,7 +277,8 @@ function PagedTable({ card }: { card: ViewCard }) {
 
 export function ViewChartCard({ card }: { card: ViewCard }) {
   const envelope = card.data;
-  const isDetail = card.type === "anomaly" || card.chart_spec?.type === "line_outlier";
+  const isDetail =
+    card.type === "anomaly" || card.chart_spec?.type === "line_outlier";
 
   if (!envelope) {
     return <ChartError message={card.reason || "该视角无数据。"} />;
@@ -215,7 +288,7 @@ export function ViewChartCard({ card }: { card: ViewCard }) {
     // T08：无图表契约但内嵌多行结果（变化贡献 / 率结构分解表）→ 表格；
     // 无行时才按指标卡空态处理
     if (envelope.rows.length > 0) return <PagedTable card={card} />;
-    return <p className="py-4 text-sm text-zinc-400">该视角以指标卡展示。</p>;
+    return <p className="py-4 text-sm text-faint">该视角以指标卡展示。</p>;
   }
   const chart = renderChart(card, envelope.rows);
   if (!chart) return <PagedTable card={card} />;
@@ -224,7 +297,7 @@ export function ViewChartCard({ card }: { card: ViewCard }) {
     <div>
       {chart}
       {envelope.sample && (
-        <p className="mt-2 text-xs text-zinc-400">{envelope.sample.note}</p>
+        <p className="mt-2 text-xs text-faint">{envelope.sample.note}</p>
       )}
     </div>
   );

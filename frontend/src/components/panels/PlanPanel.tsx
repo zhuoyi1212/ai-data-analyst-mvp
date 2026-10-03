@@ -4,22 +4,58 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { DataDictionary, PlanArtifact, PlanStep } from "@/lib/types";
 import { OP_LABELS } from "@/lib/workflow";
-import { Badge, Button, Card, ErrorBanner, SectionTitle, Spinner } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorBanner,
+  SectionTitle,
+  Spinner,
+} from "@/components/ui";
 import type { PanelProps } from "./types";
 
-const FUNCS = ["sum", "mean", "median", "count", "count_distinct", "min", "max"];
+const FUNCS = [
+  "sum",
+  "mean",
+  "median",
+  "count",
+  "count_distinct",
+  "min",
+  "max",
+];
 const FUNC_LABELS: Record<string, string> = {
-  sum: "求和", mean: "平均值", median: "中位数", count: "计数",
-  count_distinct: "去重计数", min: "最小值", max: "最大值",
+  sum: "求和",
+  mean: "平均值",
+  median: "中位数",
+  count: "计数",
+  count_distinct: "去重计数",
+  min: "最小值",
+  max: "最大值",
 };
 const GRANULARITIES = ["day", "week", "month", "quarter", "year"];
 const GRAN_LABELS: Record<string, string> = {
-  day: "按天", week: "按周", month: "按月", quarter: "按季", year: "按年",
+  day: "按天",
+  week: "按周",
+  month: "按月",
+  quarter: "按季",
+  year: "按年",
 };
-// 可在 UI 安全调整参数的算子（其余算子只读，防止越出白名单的任意编辑）
-const EDITABLE_OPS = new Set(["aggregate", "group_by", "top_n", "share", "time_series"]);
+// 可在 UI 安全调整参数的算子（其余只读，防止越出白名单的任意编辑）
+const EDITABLE_OPS = new Set([
+  "aggregate",
+  "group_by",
+  "top_n",
+  "share",
+  "time_series",
+]);
 
-export function PlanPanel({ sessionId, onAdvance, onJump, onError, readOnly }: PanelProps) {
+export function PlanPanel({
+  sessionId,
+  onAdvance,
+  onJump,
+  onError,
+  readOnly,
+}: PanelProps) {
   const [artifact, setArtifact] = useState<PlanArtifact | null>(null);
   const [dictionary, setDictionary] = useState<DataDictionary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,16 +82,24 @@ export function PlanPanel({ sessionId, onAdvance, onJump, onError, readOnly }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  const metrics = (dictionary?.fields ?? []).filter((f) => f.semantic_type === "metric");
-  const dims = (dictionary?.fields ?? []).filter(
-    (f) => f.semantic_type === "dimension" || f.semantic_type === "geo",
+  const metrics = (dictionary?.fields ?? []).filter(
+    (f) => f.semantic_type === "metric",
   );
-  const dates = (dictionary?.fields ?? []).filter((f) => f.semantic_type === "date");
+  const dims = (dictionary?.fields ?? []).filter(
+    (f) =>
+      f.semantic_type === "dimension" || f.semantic_type === "geo",
+  );
+  const dates = (dictionary?.fields ?? []).filter(
+    (f) => f.semantic_type === "date",
+  );
 
   const patchStep = (idx: number, patch: Record<string, unknown>) => {
     if (!draft) return;
     const steps = structuredClone(draft.steps);
-    steps[idx] = { ...steps[idx], params: { ...steps[idx].params, ...patch } };
+    steps[idx] = {
+      ...steps[idx],
+      params: { ...steps[idx].params, ...patch },
+    };
     setDraft({ ...draft, steps });
     setDirty(true);
   };
@@ -70,7 +114,9 @@ export function PlanPanel({ sessionId, onAdvance, onJump, onError, readOnly }: P
       setDraft(structuredClone(a.plan));
       setDirty(false);
     } catch (e) {
-      setLocalError(e instanceof ApiError ? e.message : "方案校验未通过。");
+      setLocalError(
+        e instanceof ApiError ? e.message : "方案校验未通过。",
+      );
     } finally {
       setBusy(false);
     }
@@ -96,8 +142,15 @@ export function PlanPanel({ sessionId, onAdvance, onJump, onError, readOnly }: P
   if (!artifact || !draft) {
     return (
       <Card>
-        <SectionTitle title="分析方案（Analysis Plan）" desc="请先返回上一步选择或输入一个问题，系统将把问题翻译为受支持算子的结构化方案。" />
-        {!readOnly && <Button variant="secondary" onClick={() => onJump(3)}>← 返回选择问题</Button>}
+        <SectionTitle
+          title="分析方案（Analysis Plan）"
+          desc="请先返回上一步选择或输入一个问题，系统将把问题翻译为受支持算子的结构化方案。"
+        />
+        {!readOnly && (
+          <Button variant="secondary" onClick={() => onJump(3)}>
+            ← 返回选择问题
+          </Button>
+        )}
       </Card>
     );
   }
@@ -105,88 +158,109 @@ export function PlanPanel({ sessionId, onAdvance, onJump, onError, readOnly }: P
   const locked = artifact.locked;
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <SectionTitle
-          title="分析方案确认"
-          desc="方案仅由 10 个白名单算子构成，不生成任何自由代码；服务端会对字段语义与依赖关系重新校验。你可以调整参数后再确认。"
-        />
-        {localError && <div className="mb-4"><ErrorBanner message={localError} /></div>}
-
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          {locked ? (
-            <Badge tone="green">已确认锁定 · 哈希 {artifact.plan_hash?.slice(0, 8)}</Badge>
-          ) : (
-            <Badge tone="amber">待确认</Badge>
-          )}
-          <Badge>推荐图表：{artifact.chart}</Badge>
+    <Card>
+      <SectionTitle
+        title="分析方案确认"
+        desc="方案仅由白名单算子构成，不生成任何自由代码；服务端会对字段语义与依赖关系重新校验。你可以调整参数后再确认。"
+      />
+      {localError && (
+        <div className="mb-5">
+          <ErrorBanner message={localError} />
         </div>
+      )}
 
-        <div className="space-y-3">
-          <Field label="分析问题">
-            <input
-              value={draft.question}
-              disabled={locked}
-              onChange={(e) => {
-                setDraft({ ...draft, question: e.target.value });
-                setDirty(true);
-              }}
-              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-50"
-            />
-          </Field>
-          <Field label="数据范围">
-            <input
-              value={draft.data_scope}
-              disabled={locked}
-              onChange={(e) => {
-                setDraft({ ...draft, data_scope: e.target.value });
-                setDirty(true);
-              }}
-              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-50"
-            />
-          </Field>
-        </div>
-
-        <div className="mt-5 space-y-3">
-          {draft.steps.map((step, idx) => (
-            <StepCard
-              key={step.step_id}
-              step={step}
-              index={idx}
-              locked={locked}
-              metrics={metrics.map((f) => f.name)}
-              dims={dims.map((f) => f.name)}
-              dates={dates.map((f) => f.name)}
-              onPatch={(p) => patchStep(idx, p)}
-            />
-          ))}
-        </div>
-
-        {!locked && (
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <Button variant="secondary" loading={busy} disabled={!dirty} onClick={saveEdit}>
-              保存调整并重新校验
-            </Button>
-            <Button loading={busy} disabled={dirty} onClick={confirm}>
-              {dirty ? "请先保存调整" : "确认方案并执行 →"}
-            </Button>
-            <span className="text-xs text-zinc-400">调整后必须通过同一套服务端校验才能确认</span>
-          </div>
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        {locked ? (
+          <Badge tone="green">
+            已确认锁定 · 哈希 {artifact.plan_hash?.slice(0, 8)}
+          </Badge>
+        ) : (
+          <Badge tone="amber">待确认</Badge>
         )}
-        {locked && !readOnly && (
-          <div className="mt-5">
-            <Button loading={busy} onClick={() => onJump(5)}>进入执行与校验 →</Button>
-          </div>
-        )}
-      </Card>
-    </div>
+        <Badge>推荐图表：{artifact.chart}</Badge>
+      </div>
+
+      <div className="space-y-4">
+        <Field label="分析问题">
+          <input
+            value={draft.question}
+            disabled={locked}
+            onChange={(e) => {
+              setDraft({ ...draft, question: e.target.value });
+              setDirty(true);
+            }}
+            className="field-input disabled:bg-canvas/50"
+          />
+        </Field>
+        <Field label="数据范围">
+          <input
+            value={draft.data_scope}
+            disabled={locked}
+            onChange={(e) => {
+              setDraft({ ...draft, data_scope: e.target.value });
+              setDirty(true);
+            }}
+            className="field-input disabled:bg-canvas/50"
+          />
+        </Field>
+      </div>
+
+      <div className="mt-7 space-y-4">
+        {draft.steps.map((step, idx) => (
+          <StepCard
+            key={step.step_id}
+            step={step}
+            index={idx}
+            locked={locked}
+            metrics={metrics.map((f) => f.name)}
+            dims={dims.map((f) => f.name)}
+            dates={dates.map((f) => f.name)}
+            onPatch={(p) => patchStep(idx, p)}
+          />
+        ))}
+      </div>
+
+      {!locked && (
+        <div className="mt-7 flex flex-wrap items-center gap-4">
+          <Button
+            variant="secondary"
+            loading={busy}
+            disabled={!dirty}
+            onClick={saveEdit}
+          >
+            保存调整并重新校验
+          </Button>
+          <Button loading={busy} disabled={dirty} onClick={confirm}>
+            {dirty ? "请先保存调整" : "确认方案并执行 →"}
+          </Button>
+          <span className="text-xs text-faint">
+            调整后必须通过同一套服务端校验才能确认
+          </span>
+        </div>
+      )}
+      {locked && !readOnly && (
+        <div className="mt-7">
+          <Button loading={busy} onClick={() => onJump(5)}>
+            进入执行与校验 →
+          </Button>
+        </div>
+      )}
+    </Card>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-zinc-500">{label}</span>
+      <span className="mb-1.5 block text-xs font-medium text-muted">
+        {label}
+      </span>
       {children}
     </label>
   );
@@ -211,23 +285,29 @@ function StepCard({
 }) {
   const editable = EDITABLE_OPS.has(step.op) && !locked;
   return (
-    <div className="rounded-xl border border-zinc-200 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-900 text-xs font-semibold text-white">
+    <div className="rounded-3xl border border-hairline bg-canvas/40 p-6">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink text-xs font-semibold text-white">
           {index + 1}
         </span>
         <Badge tone="blue">{OP_LABELS[step.op] ?? step.op}</Badge>
-        <span className="font-mono text-xs text-zinc-400">{step.step_id}</span>
+        <span className="font-mono text-xs text-faint">{step.step_id}</span>
         {step.depends_on.length > 0 && (
-          <span className="text-xs text-zinc-400">依赖：{step.depends_on.join("、")}</span>
+          <span className="text-xs text-faint">
+            依赖：{step.depends_on.join("、")}
+          </span>
         )}
         {!editable && !locked && (
-          <span className="text-xs text-zinc-400">（该算子参数为只读，避免任意编辑风险）</span>
+          <span className="text-xs text-faint">
+            （该算子参数为只读，避免任意编辑风险）
+          </span>
         )}
       </div>
-      <p className="mt-2 text-sm text-zinc-700">{step.description}</p>
+      <p className="mt-3 text-sm leading-relaxed text-ink/80">
+        {step.description}
+      </p>
 
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {typeof step.params.column === "string" && (
           <ParamSelect
             label="指标字段"
@@ -306,12 +386,14 @@ function ParamSelect({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs text-zinc-500">{label}</span>
+      <span className="mb-1.5 block text-xs font-medium text-muted">
+        {label}
+      </span>
       <select
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm disabled:bg-zinc-50"
+        className="field-input !py-2 disabled:bg-canvas/60"
       >
         {options.map((o) => (
           <option key={o} value={o}>
@@ -325,8 +407,8 @@ function ParamSelect({
 
 function CenterSpinner() {
   return (
-    <div className="flex items-center justify-center py-20 text-zinc-400">
-      <Spinner />
+    <div className="flex items-center justify-center py-24 text-muted">
+      <Spinner className="h-6 w-6 text-apple" />
     </div>
   );
 }

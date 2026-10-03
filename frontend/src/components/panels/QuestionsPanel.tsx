@@ -4,10 +4,21 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { RecommendedQuestion } from "@/lib/types";
 import { CATEGORY_LABELS, OP_LABELS } from "@/lib/workflow";
-import { Badge, Button, Card, EmptyState, ErrorBanner, SectionTitle, Spinner } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorBanner,
+  SectionTitle,
+  Spinner,
+} from "@/components/ui";
 import type { PanelProps } from "./types";
 
-const CATEGORY_TONE: Record<string, "blue" | "violet" | "green" | "amber" | "red" | "neutral"> = {
+const CATEGORY_TONE: Record<
+  string,
+  "blue" | "violet" | "green" | "amber" | "red" | "neutral"
+> = {
   overview: "blue",
   trend: "violet",
   comparison: "green",
@@ -17,8 +28,16 @@ const CATEGORY_TONE: Record<string, "blue" | "violet" | "green" | "amber" | "red
   correlation: "violet",
 };
 
-export function QuestionsPanel({ sessionId, onAdvance, onJump, onError, readOnly }: PanelProps) {
-  const [questions, setQuestions] = useState<RecommendedQuestion[] | null>(null);
+export function QuestionsPanel({
+  sessionId,
+  onAdvance,
+  onJump,
+  onError,
+  readOnly,
+}: PanelProps) {
+  const [questions, setQuestions] = useState<RecommendedQuestion[] | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -35,6 +54,18 @@ export function QuestionsPanel({ sessionId, onAdvance, onJump, onError, readOnly
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  async function generate() {
+    setLocalError(null);
+    setBusy(true);
+    try {
+      setQuestions((await api.generateQuestions(sessionId)).questions);
+    } catch (e) {
+      setLocalError(e instanceof ApiError ? e.message : "推荐生成失败。");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const makePlan = async (question: string, index?: number) => {
     setLocalError(null);
@@ -59,7 +90,11 @@ export function QuestionsPanel({ sessionId, onAdvance, onJump, onError, readOnly
           title="智能问题推荐（Question Recommendation）"
           desc="基于已确认的数据字典、字段关系与数据特征生成问题；每条推荐都会说明推荐依据，你也可以直接输入自定义问题。"
         />
-        {localError && <div className="mb-4"><ErrorBanner message={localError} /></div>}
+        {localError && (
+          <div className="mb-5">
+            <ErrorBanner message={localError} />
+          </div>
+        )}
         <Button loading={busy} onClick={() => void generate()}>
           生成推荐问题
         </Button>
@@ -67,37 +102,34 @@ export function QuestionsPanel({ sessionId, onAdvance, onJump, onError, readOnly
     );
   }
 
-  async function generate() {
-    setLocalError(null);
-    setBusy(true);
-    try {
-      setQuestions((await api.generateQuestions(sessionId)).questions);
-    } catch (e) {
-      setLocalError(e instanceof ApiError ? e.message : "推荐生成失败。");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <Card>
         <SectionTitle
           title="选择你想分析的问题"
-          desc="问题按分析类型分组；点击「生成分析方案」进入由有限算子组成的结构化方案。"
+          desc="点击「生成分析方案」，进入由有限算子组成的结构化方案。"
         />
-        {localError && <div className="mb-4"><ErrorBanner message={localError} /></div>}
+        {localError && (
+          <div className="mb-5">
+            <ErrorBanner message={localError} />
+          </div>
+        )}
 
         {questions.length === 0 ? (
-          <EmptyState title="暂无推荐问题" desc="可重新生成或直接输入自定义问题" />
+          <EmptyState
+            title="暂无推荐问题"
+            desc="可重新生成，或直接在下方输入自定义问题。"
+          />
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-2">
             {questions.map((q, i) => (
               <div
                 key={i}
-                className={`flex flex-col gap-2 rounded-xl border p-4 transition-colors ${
-                  active === i ? "border-accent bg-accent-soft/50" : "border-zinc-200 bg-white"
-                }`}
+                className={`flex flex-col rounded-3xl border p-6 transition-all duration-300
+                  ${active === i
+                    ? "border-apple/50 bg-apple-tint shadow-card"
+                    : "border-hairline bg-canvas/40 hover:border-line hover:bg-white hover:shadow-card"
+                  }`}
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={CATEGORY_TONE[q.category] ?? "neutral"}>
@@ -105,23 +137,28 @@ export function QuestionsPanel({ sessionId, onAdvance, onJump, onError, readOnly
                   </Badge>
                   <Badge>{OP_LABELS[q.target_op] ?? q.target_op}</Badge>
                 </div>
-                <p className="text-sm font-medium text-zinc-900">{q.text}</p>
-                <p className="text-xs leading-relaxed text-zinc-500">
-                  <span className="text-zinc-400">推荐依据：</span>
+                <p className="mt-3 text-sm font-medium leading-relaxed text-ink">
+                  {q.text}
+                </p>
+                <p className="mt-2 text-xs leading-relaxed text-muted">
+                  <span className="text-faint">推荐依据：</span>
                   {q.rationale}
                 </p>
-                <div className="flex flex-wrap gap-1">
+                <div className="mt-3 flex flex-wrap gap-1.5">
                   {q.fields.map((f) => (
-                    <span key={f} className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500">
+                    <span
+                      key={f}
+                      className="rounded-md bg-white px-2 py-0.5 font-mono text-[11px] text-muted ring-1 ring-hairline"
+                    >
                       {f}
                     </span>
                   ))}
                 </div>
                 {!readOnly && (
-                  <div className="mt-1">
+                  <div className="mt-5">
                     <Button
                       variant="secondary"
-                      className="px-3 py-1.5 text-xs"
+                      size="sm"
                       loading={busy && active === i}
                       onClick={() => {
                         setActive(i);
@@ -140,13 +177,16 @@ export function QuestionsPanel({ sessionId, onAdvance, onJump, onError, readOnly
 
       {!readOnly && (
         <Card>
-          <SectionTitle title="没有想问的？直接输入自定义问题" desc="规划器同样只会使用 10 个受支持的分析算子，不支持的分析会明确提示。" />
-          <div className="flex flex-wrap gap-2">
+          <SectionTitle
+            title="没有想问的？直接输入自定义问题"
+            desc="规划器同样只会使用受支持的分析算子，不支持的分析会明确提示。"
+          />
+          <div className="flex flex-wrap items-center gap-3">
             <input
               value={custom}
               onChange={(e) => setCustom(e.target.value)}
               placeholder="例如：各品类本月销售额相比上月如何变化？"
-              className="min-w-[260px] flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm"
+              className="field-input min-w-[260px] flex-1"
             />
             <Button
               loading={busy && active === -1}
@@ -167,8 +207,8 @@ export function QuestionsPanel({ sessionId, onAdvance, onJump, onError, readOnly
 
 function CenterSpinner() {
   return (
-    <div className="flex items-center justify-center py-20 text-zinc-400">
-      <Spinner />
+    <div className="flex items-center justify-center py-24 text-muted">
+      <Spinner className="h-6 w-6 text-apple" />
     </div>
   );
 }

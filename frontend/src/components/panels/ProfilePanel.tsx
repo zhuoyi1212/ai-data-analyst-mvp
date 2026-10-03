@@ -4,7 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { DataDictionary, FieldProfile, SemanticType } from "@/lib/types";
 import { SEMANTIC_LABELS } from "@/lib/workflow";
-import { Badge, Button, Card, ErrorBanner, SectionTitle, Spinner } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorBanner,
+  SectionTitle,
+  Spinner,
+} from "@/components/ui";
 import type { PanelProps } from "./types";
 
 const SEMANTIC_OPTIONS: SemanticType[] = [
@@ -22,18 +29,26 @@ const CONF_TONE = {
   low: "red",
 } as const;
 
-export function ProfilePanel({ sessionId, onAdvance, onJump, onError, readOnly }: PanelProps) {
+export function ProfilePanel({
+  sessionId,
+  onAdvance,
+  onJump,
+  onError,
+  readOnly,
+}: PanelProps) {
   const [dictionary, setDictionary] = useState<DataDictionary | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   // 用户对未确认字段的决策：name → {semantic_type, meaning, ignored}
-  const [decisions, setDecisions] = useState<Record<string, {
-    semantic_type: SemanticType;
-    meaning: string;
-    ignored: boolean;
-  }>>({});
+  const [decisions, setDecisions] = useState<
+    Record<string, {
+      semantic_type: SemanticType;
+      meaning: string;
+      ignored: boolean;
+    }>
+  >({});
 
   useEffect(() => {
     api
@@ -50,9 +65,13 @@ export function ProfilePanel({ sessionId, onAdvance, onJump, onError, readOnly }
     setDictionary(d);
     const pending: typeof decisions = {};
     for (const f of d.fields) {
-      if (!f.confirmed_by_user && !(f.confidence === "high" && f.semantic_type !== "unknown")) {
+      if (
+        !f.confirmed_by_user &&
+        !(f.confidence === "high" && f.semantic_type !== "unknown")
+      ) {
         pending[f.name] = {
-          semantic_type: f.semantic_type === "unknown" ? "dimension" : f.semantic_type,
+          semantic_type:
+            f.semantic_type === "unknown" ? "dimension" : f.semantic_type,
           meaning: f.meaning || "",
           ignored: f.ignored,
         };
@@ -62,7 +81,12 @@ export function ProfilePanel({ sessionId, onAdvance, onJump, onError, readOnly }
   }
 
   const pendingNames = useMemo(
-    () => (dictionary ? dictionary.fields.filter((f) => !!decisions[f.name]).map((f) => f.name) : []),
+    () =>
+      dictionary
+        ? dictionary.fields
+            .filter((f) => !!decisions[f.name])
+            .map((f) => f.name)
+        : [],
     [dictionary, decisions],
   );
 
@@ -103,9 +127,7 @@ export function ProfilePanel({ sessionId, onAdvance, onJump, onError, readOnly }
     }
   };
 
-  if (loading) {
-    return <CenterSpinner />;
-  }
+  if (loading) return <CenterSpinner />;
 
   if (!dictionary) {
     return (
@@ -114,7 +136,11 @@ export function ProfilePanel({ sessionId, onAdvance, onJump, onError, readOnly }
           title="语义分析（Semantic Profile）"
           desc="AI 会结合字段名、样例值与统计特征识别字段含义；无法确认的字段需要你逐项确认，确认结果将写入数据字典。"
         />
-        {localError && <LocalError message={localError} onRetry={generate} />}
+        {localError && (
+          <div className="mb-5">
+            <ErrorBanner message={localError} onRetry={generate} />
+          </div>
+        )}
         <Button loading={generating} onClick={generate}>
           开始语义分析
         </Button>
@@ -125,76 +151,90 @@ export function ProfilePanel({ sessionId, onAdvance, onJump, onError, readOnly }
   const allConfirmed = dictionary.complete;
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <SectionTitle
-          title="数据字典与语义确认"
-          desc={`共 ${dictionary.fields.length} 个字段。绿色徽标=AI 高置信识别；黄色/红色=需要你确认后才会进入后续分析。`}
-        />
-        {localError && <LocalError message={localError} />}
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-zinc-200 text-left text-xs text-zinc-400">
-                <th className="py-2 pr-3 font-medium">字段</th>
-                <th className="py-2 pr-3 font-medium">物理类型</th>
-                <th className="py-2 pr-3 font-medium">语义 / 含义</th>
-                <th className="py-2 pr-3 font-medium">样例</th>
-                <th className="py-2 pr-3 font-medium">置信度</th>
-                {!allConfirmed && <th className="py-2 pr-3 font-medium">你的确认</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {dictionary.fields.map((f) => (
-                <FieldRow
-                  key={f.name}
-                  field={f}
-                  pending={decisions[f.name]}
-                  allConfirmed={allConfirmed}
-                  onChange={(d) => setDecisions((s) => ({ ...s, [f.name]: d }))}
-                />
-              ))}
-            </tbody>
-          </table>
+    <Card>
+      <SectionTitle
+        title="数据字典与语义确认"
+        desc={`共 ${dictionary.fields.length} 个字段。绿色徽标 = AI 高置信识别；黄色 / 红色 = 需要你确认后才会进入后续分析。`}
+      />
+      {localError && (
+        <div className="mb-5">
+          <ErrorBanner message={localError} />
         </div>
+      )}
 
-        {dictionary.relations.length > 0 && (
-          <div className="mt-4 rounded-lg bg-zinc-50 p-3 text-xs text-zinc-500">
-            <p className="mb-1 font-medium text-zinc-600">自动识别的字段关系</p>
-            <ul className="list-inside list-disc space-y-0.5">
-              {dictionary.relations.map((r, i) => (
-                <li key={i}>{r.note}</li>
-              ))}
-            </ul>
-          </div>
+      <div className="overflow-x-auto rounded-2xl border border-hairline">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-canvas/60 text-left text-xs text-muted">
+              <th className="px-4 py-3 font-medium">字段</th>
+              <th className="px-4 py-3 font-medium">物理类型</th>
+              <th className="px-4 py-3 font-medium">语义 / 含义</th>
+              <th className="px-4 py-3 font-medium">样例</th>
+              <th className="px-4 py-3 font-medium">置信度</th>
+              {!allConfirmed && (
+                <th className="px-4 py-3 font-medium">你的确认</th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {dictionary.fields.map((f) => (
+              <FieldRow
+                key={f.name}
+                field={f}
+                pending={decisions[f.name]}
+                allConfirmed={allConfirmed}
+                onChange={(d) =>
+                  setDecisions((s) => ({ ...s, [f.name]: d }))
+                }
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {dictionary.relations.length > 0 && (
+        <div className="mt-5 rounded-2xl bg-canvas p-4 text-xs text-muted">
+          <p className="mb-1.5 font-medium text-ink/70">
+            自动识别的字段关系
+          </p>
+          <ul className="list-inside list-disc space-y-1">
+            {dictionary.relations.map((r, i) => (
+              <li key={i}>{r.note}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-7 flex flex-wrap items-center gap-4">
+        {!allConfirmed ? (
+          <>
+            <Button
+              loading={submitting}
+              disabled={
+                pendingNames.length === 0 ||
+                pendingNames.some(
+                  (n) =>
+                    !decisions[n].ignored &&
+                    !decisions[n].meaning.trim(),
+                )
+              }
+              onClick={submitConfirm}
+            >
+              提交确认{pendingNames.length > 0 ? `（${pendingNames.length} 项）` : ""}
+            </Button>
+            <span className="text-xs text-faint">
+              所有待确认字段处理完后才能进入下一步（可选择「忽略字段」）
+            </span>
+          </>
+        ) : (
+          !readOnly && (
+            <Button onClick={() => onJump(2)}>
+              下一步：数据质量检测 →
+            </Button>
+          )
         )}
-
-        <div className="mt-5 flex items-center gap-3">
-          {!allConfirmed ? (
-            <>
-              <Button
-                loading={submitting}
-                disabled={pendingNames.length === 0 || pendingNames.some(
-                  (n) => !decisions[n].ignored && !decisions[n].meaning.trim(),
-                )}
-                onClick={submitConfirm}
-              >
-                提交确认{pendingNames.length > 0 ? `（${pendingNames.length} 项）` : ""}
-              </Button>
-              <span className="text-xs text-zinc-400">
-                所有待确认字段处理完后才能进入下一步（可选择「忽略字段」）
-              </span>
-            </>
-          ) : (
-            !readOnly && (
-              <Button onClick={() => onJump(2)}>
-                下一步：数据质量检测 →
-              </Button>
-            )
-          )}
-        </div>
-      </Card>
-    </div>
+      </div>
+    </Card>
   );
 }
 
@@ -205,50 +245,75 @@ function FieldRow({
   onChange,
 }: {
   field: FieldProfile;
-  pending?: { semantic_type: SemanticType; meaning: string; ignored: boolean };
+  pending?: {
+    semantic_type: SemanticType;
+    meaning: string;
+    ignored: boolean;
+  };
   allConfirmed: boolean;
-  onChange: (d: { semantic_type: SemanticType; meaning: string; ignored: boolean }) => void;
+  onChange: (d: {
+    semantic_type: SemanticType;
+    meaning: string;
+    ignored: boolean;
+  }) => void;
 }) {
   const tone = CONF_TONE[f.confidence];
-  const examples = f.examples.slice(0, 3).map((v) => (v === null ? "∅" : String(v))).join("，");
+  const examples = f.examples
+    .slice(0, 3)
+    .map((v) => (v === null ? "∅" : String(v)))
+    .join("，");
   return (
-    <tr className="border-b border-zinc-100 align-top">
-      <td className="py-3 pr-3 font-medium text-zinc-800">{f.name}</td>
-      <td className="py-3 pr-3 text-xs text-zinc-500">{f.physical_type}</td>
-      <td className="py-3 pr-3">
+    <tr className="border-t border-hairline align-top">
+      <td className="px-4 py-3.5 font-medium text-ink">{f.name}</td>
+      <td className="px-4 py-3.5 text-xs text-muted">{f.physical_type}</td>
+      <td className="px-4 py-3.5">
         <Badge tone={f.semantic_type === "unknown" ? "amber" : "blue"}>
           {SEMANTIC_LABELS[f.semantic_type]}
         </Badge>
-        <p className="mt-1 text-xs text-zinc-600">{f.meaning || "—"}{f.unit ? `（单位：${f.unit}）` : ""}</p>
+        <p className="mt-1.5 text-xs text-muted">
+          {f.meaning || "—"}
+          {f.unit ? `（单位：${f.unit}）` : ""}
+        </p>
         {!allConfirmed && f.candidates.length > 0 && !pending?.ignored && (
-          <p className="mt-1 text-xs text-zinc-400">候选：{f.candidates.join(" / ")}</p>
+          <p className="mt-1 text-xs text-faint">
+            候选：{f.candidates.join(" / ")}
+          </p>
         )}
       </td>
-      <td className="max-w-[180px] truncate py-3 pr-3 text-xs text-zinc-500" title={examples}>
+      <td
+        className="max-w-[180px] truncate px-4 py-3.5 text-xs text-muted"
+        title={examples}
+      >
         {examples || "—"}
       </td>
-      <td className="py-3 pr-3">
+      <td className="px-4 py-3.5">
         <Badge tone={tone}>
-          {f.confidence === "high" ? "高" : f.confidence === "medium" ? "待确认" : "低置信"}
+          {f.confidence === "high"
+            ? "高"
+            : f.confidence === "medium"
+              ? "待确认"
+              : "低置信"}
         </Badge>
-        {f.confirmed_by_user && <span className="ml-1 text-xs text-emerald-600">已确认</span>}
+        {f.confirmed_by_user && (
+          <span className="ml-1.5 text-xs text-success">已确认</span>
+        )}
       </td>
       {!allConfirmed && (
-        <td className="min-w-[260px] py-3 pr-3">
+        <td className="min-w-[270px] px-4 py-3.5">
           {pending ? (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {f.candidates.length > 0 && !pending.ignored && (
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-1.5">
                   {f.candidates.map((c) => (
                     <button
                       key={c}
                       type="button"
                       onClick={() => onChange({ ...pending, meaning: c })}
-                      className={`rounded-full border px-2 py-0.5 text-xs ${
-                        pending.meaning === c
-                          ? "border-accent bg-accent-soft text-accent"
-                          : "border-zinc-200 text-zinc-500 hover:bg-zinc-50"
-                      }`}
+                      className={`rounded-full border px-2.5 py-0.5 text-xs transition-all
+                        ${pending.meaning === c
+                          ? "border-apple bg-apple-soft text-apple"
+                          : "border-line text-muted hover:border-faint hover:bg-canvas"
+                        }`}
                     >
                       {c}
                     </button>
@@ -260,9 +325,12 @@ function FieldRow({
                   <select
                     value={pending.semantic_type}
                     onChange={(e) =>
-                      onChange({ ...pending, semantic_type: e.target.value as SemanticType })
+                      onChange({
+                        ...pending,
+                        semantic_type: e.target.value as SemanticType,
+                      })
                     }
-                    className="rounded-md border border-zinc-300 px-2 py-1 text-xs"
+                    className="field-input flex-1 !py-1.5 text-xs"
                   >
                     {SEMANTIC_OPTIONS.map((s) => (
                       <option key={s} value={s}>
@@ -272,23 +340,28 @@ function FieldRow({
                   </select>
                   <input
                     value={pending.meaning}
-                    onChange={(e) => onChange({ ...pending, meaning: e.target.value })}
+                    onChange={(e) =>
+                      onChange({ ...pending, meaning: e.target.value })
+                    }
                     placeholder="确认字段业务含义"
-                    className="min-w-0 flex-1 rounded-md border border-zinc-300 px-2 py-1 text-xs"
+                    className="field-input min-w-0 flex-1 !py-1.5 text-xs"
                   />
                 </div>
               )}
-              <label className="flex items-center gap-1 text-xs text-zinc-500">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
                 <input
                   type="checkbox"
                   checked={pending.ignored}
-                  onChange={(e) => onChange({ ...pending, ignored: e.target.checked })}
+                  onChange={(e) =>
+                    onChange({ ...pending, ignored: e.target.checked })
+                  }
+                  className="h-3.5 w-3.5 accent-[#0071e3]"
                 />
                 忽略该字段（不参与分析）
               </label>
             </div>
           ) : (
-            <span className="text-xs text-emerald-600">✓ 已自动识别</span>
+            <span className="text-xs text-success">✓ 已自动识别</span>
           )}
         </td>
       )}
@@ -296,18 +369,10 @@ function FieldRow({
   );
 }
 
-function LocalError({ message, onRetry }: { message: string; onRetry?: () => void }) {
-  return (
-    <div className="mb-4">
-      <ErrorBanner message={message} onRetry={onRetry} />
-    </div>
-  );
-}
-
 function CenterSpinner() {
   return (
-    <div className="flex items-center justify-center py-20 text-zinc-400">
-      <Spinner />
+    <div className="flex items-center justify-center py-24 text-muted">
+      <Spinner className="h-6 w-6 text-apple" />
     </div>
   );
 }

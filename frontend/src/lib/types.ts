@@ -279,6 +279,8 @@ export interface ViewCard {
   default_hidden: boolean;
   hide_reasons: string[];
   value_scores: Record<string, number>;
+  // Task 7：普通视图 / 深挖探针
+  ref_type?: 'view' | 'probe';
 }
 
 export interface KPI {
@@ -345,6 +347,135 @@ export interface DashboardArtifact {
   risks: Finding[];
   failed_views: FailedView[];
   global_filters: FilterDefinition[];
+  layout: DashboardLayout | null;
+}
+
+// ------------------------------------------------ Task 7：12-column 布局
+
+export type LayoutRole =
+  | 'kpi' | 'hero' | 'primary' | 'supporting' | 'diagnostic' | 'findings';
+
+export interface DashboardLayoutItem {
+  item_id: string;
+  role: LayoutRole;
+  ref_type: 'view' | 'probe' | 'meta';
+  col_span: number;
+  row_span: number;
+  order: number;
+  rationale: string;
+  default_hidden: boolean;
+}
+
+export interface DashboardLayout {
+  items: DashboardLayoutItem[];
+  generated_at: string;
+}
+
+// ------------------------------------------------ Task 5：证据图谱
+
+export interface EvidenceNode {
+  node_id: string;
+  type: 'view' | 'probe' | 'signal' | 'chain' | 'claim';
+  label: string;
+}
+
+export interface EvidenceEdge {
+  source: string;
+  target: string;
+  type: 'evidence' | 'root' | 'uses' | 'supports';
+}
+
+export interface EvidenceGraph {
+  session_id: string;
+  run_id: string;
+  nodes: EvidenceNode[];
+  edges: EvidenceEdge[];
+  created_at: string;
+}
+
+// ------------------------------------------------ Task 1：自动分析状态
+
+export type AutoStageName =
+  | 'profile' | 'quality' | 'scan' | 'signals'
+  | 'diagnostic' | 'synthesis';
+
+export interface StageLog {
+  stage: AutoStageName;
+  status: 'pending' | 'running' | 'completed' | 'skipped' | 'failed';
+  message: string;
+  started_at: string;
+  ended_at: string;
+}
+
+export interface GateQuestion {
+  question_id: string;
+  stage: AutoStageName;
+  prompt: string;
+  options: string[];
+  allow_free_text: boolean;
+  context: Record<string, string>;
+}
+
+export interface AutoAnalysisState {
+  session_id: string;
+  status: 'running' | 'waiting_input' | 'completed' | 'failed';
+  current_stage: AutoStageName;
+  stages: StageLog[];
+  needs_input: GateQuestion[];
+  answers: Record<string, string>;
+  run_id: string;
+  artifacts: Record<string, string>;
+  error?: string;
+}
+
+// ------------------------------------------------ Task 6：深度报告
+
+export type ReportClaimType = 'fact' | 'signal' | 'hypothesis' | 'conclusion';
+
+export interface ReportClaim {
+  claim_id: string;
+  text: string;
+  claim_type: ReportClaimType;
+  evidence_view_ids: string[];
+  limitations: string;
+}
+
+export interface ReportSection {
+  section_id: string;
+  title: string;
+  claims: ReportClaim[];
+}
+
+export interface AnalysisReportArtifact {
+  session_id: string;
+  run_id: string;
+  sections: ReportSection[];
+  evidence_graph_created_at: string;
+  generated_at: string;
+}
+
+// ------------------------------------------------ Task 8：追问
+
+export interface AskClaim {
+  text: string;
+  evidence_view_ids: string[];
+}
+
+export interface AskArtifact {
+  ask_id: string;
+  question: string;
+  answer_claims: AskClaim[];
+  new_view_ids: string[];
+  scope_rows: number;
+  appended_report_section_ids: string[];
+  dashboard_refreshed?: boolean;
+  created_at: string;
+}
+
+export interface AskSet {
+  session_id: string;
+  run_id: string;
+  asks: AskArtifact[];
 }
 
 export interface RunSummary {

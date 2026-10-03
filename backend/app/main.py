@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.routers import (
+    auto,
     bundle,
     dashboard,
     diagnostic,
@@ -30,6 +31,7 @@ from app.services.llm.fixtures import FixtureMissingError
 app = FastAPI(title="AI Data Analyst MVP", version="0.1.0")
 
 app.include_router(sessions.router)
+app.include_router(auto.router)
 app.include_router(profile.router)
 app.include_router(quality.router)
 app.include_router(questions.router)

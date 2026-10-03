@@ -150,6 +150,9 @@ class ViewCard(BaseModel):
     hide_reasons: list[str] = Field(default_factory=list)
     value_scores: dict[str, float] = Field(default_factory=dict)
 
+    # Task 7：深挖链探针卡（id 与普通 view 同字典，但 ref_type=probe）
+    ref_type: Literal["view", "probe"] = "view"
+
 
 # ----------------------------------------------------------------- 筛选/范围
 
@@ -271,3 +274,41 @@ class DashboardArtifact(BaseModel):
     risks: list[Finding] = Field(default_factory=list)  # findings 中 type=="risk" 子集
     failed_views: list[FailedView] = Field(default_factory=list)
     global_filters: list[FilterDefinition] = Field(default_factory=list)
+    layout: "DashboardLayout | None" = None  # Task 7：12-column 组合布局
+
+
+# ------------------------------------------------------- Task 7 布局契约
+
+LayoutRole = Literal[
+    "kpi", "hero", "primary", "supporting", "diagnostic", "findings"
+]
+
+
+class DashboardLayoutItem(BaseModel):
+    """12-column 网格中的一个排版项。
+
+    ref_type=meta 时 item_id 为面板伪 id（KPI 条 / Findings）；
+    view/probe 时 item_id 等于 views 字典中的 view_id（探针同字典）。
+    前端按连续顺序贪心换行即可：每行 col_span 之和 ≤12。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    role: LayoutRole
+    ref_type: Literal["view", "probe", "meta"] = "view"
+    col_span: int = Field(ge=1, le=12)
+    row_span: int = Field(ge=1, le=4)
+    order: int = Field(ge=0)
+    rationale: str = Field(min_length=1)
+    default_hidden: bool = False
+
+
+class DashboardLayout(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[DashboardLayoutItem] = Field(default_factory=list)
+    generated_at: str
+
+
+DashboardArtifact.model_rebuild()

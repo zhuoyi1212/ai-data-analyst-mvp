@@ -2,8 +2,12 @@
 // 所有错误均提取后端中文 detail，绝不在前端伪造任何数据结果。
 
 import type {
+  AnalysisReportArtifact,
+  AskArtifact,
+  AutoAnalysisState,
   DashboardArtifact,
   DataDictionary,
+  EvidenceGraph,
   FollowUpSet,
   Insight,
   Ledger,
@@ -158,4 +162,21 @@ export const api = {
     get<ViewDataEnvelope>(
       `${dataRef}?page=${page}&page_size=${pageSize}`,
     ),
+
+  // ---- Autonomous Analyst（Task 1–8） ----
+  startAuto: (id: string, answers?: Record<string, string>) =>
+    post<AutoAnalysisState>(
+      `/sessions/${id}/auto-analyze`,
+      answers ? { answers } : {},
+    ),
+  getAutoState: (id: string) =>
+    get<AutoAnalysisState>(`/sessions/${id}/auto-analyze`),
+  getEvidence: (id: string, node?: string) =>
+    get<EvidenceGraph>(
+      `/sessions/${id}/evidence${node ? `?node=${encodeURIComponent(node)}` : ""}`,
+    ),
+  getReport: (id: string) =>
+    get<AnalysisReportArtifact>(`/sessions/${id}/report`),
+  ask: (id: string, question: string) =>
+    post<AskArtifact>(`/sessions/${id}/ask`, { question }),
 };

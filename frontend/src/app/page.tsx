@@ -32,7 +32,7 @@ export default function Home() {
   }, []);
 
   const go = useCallback(
-    (sessionId: string) => router.push(`/sessions/${sessionId}`),
+    (sessionId: string) => router.push(`/sessions/${sessionId}/analyzing`),
     [router],
   );
 
@@ -132,8 +132,9 @@ export default function Home() {
               style={{ animationDelay: "180ms" }}
             >
               无需 SQL，也无需 Python。上传一份二维表格，AI
-              会与你逐步确认字段语义、处理数据质量、规划分析方案。
-              所有数值由确定性计算引擎产出，每条洞察都可追溯到数据与公式。
+              会自动理解数据、多维扫描、对关键信号逐层深挖，
+              产出交互式 Dashboard 与深度分析报告。
+              所有数值由确定性计算引擎产出，每条结论都可追溯到数据与公式。
             </p>
             <div
               className="animate-fade-up mt-10 flex flex-wrap items-center justify-center gap-x-8 gap-y-4"
@@ -297,7 +298,7 @@ export default function Home() {
                 </h2>
                 <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-muted">
                   每个示例集都预埋了常见的数据质量问题，
-                  可完整体验「检测 → 确认 → 处理」的完整流程。
+                  可完整体验 AI 自动体检与分析的完整流程。
                 </p>
               </div>
             </Reveal>

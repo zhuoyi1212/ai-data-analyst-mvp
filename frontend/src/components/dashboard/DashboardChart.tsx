@@ -63,7 +63,7 @@ function ChartError({ message }: { message: string }) {
   return <p className="py-6 text-center text-sm text-danger">{message}</p>;
 }
 
-function renderChart(card: ViewCard, rows: Row[]) {
+function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
   const spec = card.chart_spec;
   if (!spec) return null;
 
@@ -72,7 +72,7 @@ function renderChart(card: ViewCard, rows: Row[]) {
     case "share_bar":
     case "grouped_bar":
       return (
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={chartHeight}>
           <BarChart
             data={rows}
             margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
@@ -102,7 +102,7 @@ function renderChart(card: ViewCard, rows: Row[]) {
         ? "share"
         : spec.y_fields[0];
       return (
-        <ResponsiveContainer width="100%" height={320}>
+        <ResponsiveContainer width="100%" height={chartHeight + 20}>
           <PieChart>
             <Pie
               data={rows}
@@ -124,7 +124,7 @@ function renderChart(card: ViewCard, rows: Row[]) {
     }
     case "line":
       return (
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={chartHeight}>
           <LineChart
             data={rows}
             margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
@@ -151,7 +151,7 @@ function renderChart(card: ViewCard, rows: Row[]) {
       );
     case "scatter":
       return (
-        <ResponsiveContainer width="100%" height={320}>
+        <ResponsiveContainer width="100%" height={chartHeight + 20}>
           <ScatterChart margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
             <CartesianGrid stroke={GRID} />
             <XAxis
@@ -275,7 +275,9 @@ function PagedTable({ card }: { card: ViewCard }) {
 
 // ----------------------------------------------------------------- 卡片出口
 
-export function ViewChartCard({ card }: { card: ViewCard }) {
+export function ViewChartCard({
+  card, chartHeight = 300,
+}: { card: ViewCard; chartHeight?: number }) {
   const envelope = card.data;
   const isDetail =
     card.type === "anomaly" || card.chart_spec?.type === "line_outlier";
@@ -290,7 +292,7 @@ export function ViewChartCard({ card }: { card: ViewCard }) {
     if (envelope.rows.length > 0) return <PagedTable card={card} />;
     return <p className="py-4 text-sm text-faint">该视角以指标卡展示。</p>;
   }
-  const chart = renderChart(card, envelope.rows);
+  const chart = renderChart(card, envelope.rows, chartHeight);
   if (!chart) return <PagedTable card={card} />;
 
   return (

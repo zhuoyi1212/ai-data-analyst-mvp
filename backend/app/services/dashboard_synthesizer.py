@@ -37,16 +37,18 @@ from app.schemas.dashboard import (
     ViewCard,
 )
 from app.schemas.dictionary import DataDictionary
+from app.schemas.auto import ChainSet
 from app.services.bundle_planner import (
     apply_scope_filters,
     normalize_scope,
 )
+from app.services.layout_composer import compose_layout
 from app.services.derived_metrics import detect_derived_metrics
 from app.services.executor import execute_plan
 from app.services.metric_spec import effective_metric_spec
 from app.services.offline_fallback import build_plan
 from app.services.period_compare import PeriodCompareError, period_comparison
-from app.services.storage import SessionStore, StaleRunError
+from app.services.storage import SessionStore, StaleRunError, StorageError
 from app.services.value_filter import ValueAssessment, filter_run
 from app.services.view_data import build_envelope
 
@@ -388,6 +390,59 @@ def _build_view_cards(
     return cards
 
 
+# ----------------------------------------------------------------- 深挖探针卡
+
+def _build_probe_cards(
+    sid: str, store: SessionStore, run_id: str, chain_set: Any
+) -> dict[str, ViewCard]:
+    """深挖链探针 → 与 view 同构的自足卡片（role=computation，默认隐藏）。
+
+    每个 probe 以 group_by 结果为代表（维度+value，与 bar 图契约一致）；
+    layout_composer 再挑选高优先级探针置为可见 diagnostic。
+    """
+    cards: dict[str, ViewCard] = {}
+    seen: set[str] = set()
+    base = store.run_dir(sid, run_id) / "diagnostic" / "probes"
+    for chain in chain_set.chains:
+        for dv in chain.diagnostic_views:
+            pid = dv.probe_id
+            if pid in seen:
+                continue
+            seen.add(pid)
+            pdir = base / pid
+            rpath = pdir / "result_group_by.parquet"
+            ppath = pdir / "plan_group_by.json"
+            if not rpath.exists() or not ppath.exists():
+                continue
+            df = pd.read_parquet(rpath)
+            if not len(df) or "value" not in df.columns:
+                continue
+            params = json.loads(ppath.read_text())["steps"][-1]["params"]
+            dim = params["dimension"]
+            metric = params.get("metric") or ""
+            spec = ChartSpec(
+                type="bar", title=f"{dim} 分组对比",
+                x_field=dim, y_fields=["value"], dimension=dim,
+                metric=metric, interactive=True,
+            )
+            data_ref = (
+                f"/sessions/{sid}/runs/{run_id}"
+                f"/diagnostic/probes/{pid}/rows"
+            )
+            cards[pid] = ViewCard(
+                view_id=pid, ref_type="probe",
+                title=f"{dim} 分组对比", question=f"按 {dim} 分组对比",
+                type=ViewType.breakdown, section_id="diagnosis",
+                chart_spec=spec,
+                data=build_envelope("aggregate", df, data_ref),
+                status=ViewStatus.success, validity="pass", consumable=True,
+                metric_label=metric, role="computation",
+                default_hidden=True,
+                hide_reasons=["深挖链探针，默认折叠"],
+            )
+    return cards
+
+
 # ----------------------------------------------------------------- 主编排
 
 def _verify_run_fingerprints(session_id: str, store: SessionStore):
@@ -420,6 +475,7 @@ def synthesize_dashboard(
     store: SessionStore,
     *,
     findings: list | None = None,
+    force: bool = False,
 ) -> DashboardArtifact:
     """读取当前运行的 Bundle + 执行结果 → 合成并原子发布 DashboardArtifact。
 
@@ -434,9 +490,10 @@ def synthesize_dashboard(
     manifest = _verify_run_fingerprints(session_id, store)
     run_id = manifest.run_id
 
-    # 幂等：同一运行已发布过的仪表盘直接读回（probe 预算/证据全部保留）
+    # 幂等：同一运行已发布过的仪表盘直接读回（probe 预算/证据全部保留）；
+    # force=True（追问追加新视图后）跳过读回、就地重合成并重新原子发布。
     published_path = store.run_dir(session_id, run_id) / "dashboard.json"
-    if published_path.exists():
+    if published_path.exists() and not force:
         return DashboardArtifact.model_validate(
             store.read_dashboard(session_id, run_id=run_id)
         )
@@ -535,6 +592,22 @@ def synthesize_dashboard(
         if c.role == "presentation" and c.status == ViewStatus.failed
     ]
 
+    # Task 7：深挖链探针卡 + 12-column 布局
+    all_cards = dict(cards)
+    try:
+        chain_set = ChainSet.model_validate(
+            store.read_artifact(session_id, "chains")
+        )
+    except StorageError:
+        chain_set = None
+    if chain_set is not None:
+        all_cards.update(
+            _build_probe_cards(session_id, store, run_id, chain_set)
+        )
+    layout = compose_layout(
+        kpis=kpis, cards=all_cards, findings=findings, chain_set=chain_set,
+    )
+
     artifact = DashboardArtifact(
         run_id=run_id,
         bundle_id=bundle.bundle_id,
@@ -543,11 +616,12 @@ def synthesize_dashboard(
         scope=scope,
         kpis=kpis,
         sections=sections,
-        views=cards,
+        views=all_cards,
         findings=findings,
         risks=risks,
         failed_views=failed_views,
         global_filters=filters,
+        layout=layout,
     )
     # expected_run_id：迟到的合成响应若发现 active 已前进，绝不回切 current
     store.write_dashboard(

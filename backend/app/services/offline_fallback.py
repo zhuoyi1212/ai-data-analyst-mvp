@@ -22,6 +22,7 @@ from app.schemas.common import (
     OutlierMethod,
     QuestionCategory,
     SemanticType,
+    SortOrder,
     TimeGranularity,
 )
 from app.schemas.dictionary import DataDictionary, FieldProfile
@@ -304,9 +305,11 @@ def _step(op: str, hint: dict[str, Any], fields: list[str]):
         p = TopNParams(
             dimension=hint["dimension"], metric=hint.get("metric"),
             func=AggFunc(hint.get("func", "sum")), n=int(hint.get("n", 5)),
+            order=SortOrder(hint.get("order", "desc")),
         )
+        label = "前" if p.order is SortOrder.desc else "最低"
         return TopNStep(step_id="top_n", op="top_n", params=p,
-                        description=f"按「{p.metric or '记录数'}」取「{p.dimension}」前 {p.n} 名")
+                        description=f"按「{p.metric or '记录数'}」取「{p.dimension}」{label} {p.n} 名")
     if op == "time_series":
         p = TimeSeriesParams(
             date_column=hint.get("date_column") or fields[0],

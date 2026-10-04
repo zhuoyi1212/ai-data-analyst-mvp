@@ -37,7 +37,11 @@ from app.schemas.dashboard import (
     ViewCard,
 )
 from app.schemas.dictionary import DataDictionary
-from app.schemas.auto import ChainSet
+from app.schemas.auto import ChainSet, SignalSet
+from app.services.insight_candidates import (
+    generate_insight_candidates,
+    score_and_rank,
+)
 from app.services.bundle_planner import (
     apply_scope_filters,
     normalize_scope,
@@ -592,16 +596,43 @@ def synthesize_dashboard(
         bundle, dictionary, snapshot, selected_by_col
     )
 
+    # 载入 SignalSet：全量信号供 Insight 生成，扫描视图供证据排序
+    try:
+        signals = list(
+            SignalSet.model_validate(
+                store.read_artifact(session_id, "signals")
+            ).signals
+        )
+    except StorageError:
+        signals = []
+
+    # scope_tag：当前全局筛选口径指纹，作为 Finding/Insight 去重键的 scope 部分
+    scope_tag = hashlib.sha256(
+        json.dumps(manifest.scope, ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()[:12]
     if findings is None:
-        # scope_tag：当前全局筛选口径指纹，作为 Finding 去重键的 scope 部分
-        scope_tag = hashlib.sha256(
-            json.dumps(manifest.scope, ensure_ascii=False, sort_keys=True).encode()
-        ).hexdigest()[:12]
         findings = detect_findings(
             session_id, store, bundle, execution, dictionary, runner,
             scope_tag=scope_tag,
         )
     risks = [f for f in findings if f.type == "risk"]
+
+    # Phase 4（Insight-first）：Broad Scan → 信号/发现 → 业务事实候选 → 评分排序。
+    # 候选只来自确定性计算，final_score 见 insight_candidates.score_and_rank。
+    insights = score_and_rank(
+        generate_insight_candidates(
+            session_id, store, bundle, execution, signals, findings,
+            scope_tag=scope_tag,
+        )
+    )
+    # Hero/Primary/Supporting 的证据顺序来自最强业务事实，而非 ViewType 固定优先级
+    featured_view_ids: list[str] = []
+    _featured_seen: set[str] = set()
+    for ins in insights:
+        for vid in ins.evidence_view_ids:
+            if vid not in _featured_seen:
+                _featured_seen.add(vid)
+                featured_view_ids.append(vid)
 
     # T07：state 只统计 presentation 视图——computation 证据任务隐藏与否
     # 不影响整体状态；默认展示的核心视图全部可消费才是 ready。
@@ -647,18 +678,14 @@ def synthesize_dashboard(
 
     # 与真实信号/发现关联的视图：它们「有说法、有证据」，排序应靠前
     signal_view_ids: set[str] = set()
-    try:
-        sig_payload = store.read_artifact(session_id, "signals")
-        for sig in sig_payload["signals"]:
-            signal_view_ids.update(sig["scan_view_ids"])
-    except StorageError:
-        pass
+    for sig in signals:
+        signal_view_ids.update(sig.scan_view_ids)
     for f in findings:
         signal_view_ids.update(f.evidence_view_ids)
 
     layout = compose_layout(
         kpis=kpis, cards=all_cards, findings=findings, chain_set=chain_set,
-        signal_view_ids=signal_view_ids,
+        signal_view_ids=signal_view_ids, featured_view_ids=featured_view_ids,
     )
 
     artifact = DashboardArtifact(
@@ -670,6 +697,7 @@ def synthesize_dashboard(
         kpis=kpis,
         sections=sections,
         views=all_cards,
+        insights=insights,
         findings=findings,
         risks=risks,
         failed_views=failed_views,

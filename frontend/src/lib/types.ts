@@ -329,6 +329,44 @@ export interface Finding {
   drilldown: unknown | null;
 }
 
+export type InsightType =
+  | 'performance_change'
+  | 'contribution'
+  | 'concentration'
+  | 'underperformance'
+  | 'divergence'
+  | 'anomaly'
+  | 'efficiency'
+  | 'opportunity'
+  | 'risk'
+  | 'relationship';
+
+export interface InsightCandidate {
+  insight_id: string;
+  type: InsightType;
+  title: string;
+  summary: string;
+  metric: string | null;
+  scope: string;
+  dimension: string | null;
+  member: string | null;
+  current_value: number | null;
+  comparison_value: number | null;
+  delta: number | null;
+  delta_pct: number | null;
+  impact_score: number;
+  anomaly_score: number;
+  actionability_score: number;
+  explainability_score: number;
+  confidence_score: number;
+  redundancy_score: number;
+  final_score: number;
+  evidence_view_ids: string[];
+  recommended_chart_type: string | null;
+  importance: 'high' | 'medium' | 'low';
+  reason: string;
+}
+
 export interface FailedView {
   view_id: string;
   title: string;
@@ -344,6 +382,7 @@ export interface DashboardArtifact {
   kpis: KPI[];
   sections: DashboardSection[];
   views: Record<string, ViewCard>;
+  insights: InsightCandidate[];
   findings: Finding[];
   risks: Finding[];
   failed_views: FailedView[];

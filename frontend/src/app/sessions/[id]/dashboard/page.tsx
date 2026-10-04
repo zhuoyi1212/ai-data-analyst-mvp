@@ -11,6 +11,7 @@ import { useParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import type {
   DashboardArtifact,
+  InsightCandidate,
   KPI,
   RunSummary,
   SessionMeta,
@@ -78,6 +79,20 @@ const FINDING_TYPE_LABEL: Record<string, string> = {
   opportunity: "机会",
 };
 
+// Insight 业务事实类型中文标签（按业务含义，而非图表类型）
+const INSIGHT_TYPE_LABEL: Record<string, string> = {
+  performance_change: "表现变化",
+  contribution: "贡献拆解",
+  concentration: "集中度",
+  underperformance: "表现落后",
+  divergence: "量利背离",
+  anomaly: "异常",
+  efficiency: "效率",
+  opportunity: "机会",
+  risk: "风险",
+  relationship: "关联",
+};
+
 function fmtValue(value: number, unit: string) {
   if (unit === "%") return `${(value * 100).toFixed(1)}%`;
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -110,6 +125,70 @@ function KpiCard({ kpi }: { kpi: KPI }) {
       {kpi.change_hint && (
         <p className="mt-1.5 text-xs text-faint">{kpi.change_hint}</p>
       )}
+    </Card>
+  );
+}
+
+// 核心业务事实（Insight Candidate）：结论式标题 + 现象/影响/建议 + 证据跳转。
+function InsightCard({
+  insight,
+  rank,
+  artifact,
+  onJump,
+}: {
+  insight: InsightCandidate;
+  rank: number;
+  artifact: DashboardArtifact;
+  onJump: (viewId: string) => void;
+}) {
+  return (
+    <Card className="border-l-4 border-apple/50">
+      <div className="flex items-start gap-4">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-apple-soft text-sm font-semibold tabular-nums text-apple">
+          {rank}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Badge
+              tone={IMPORTANCE_TONE[insight.importance] ?? "neutral"}
+            >
+              {IMPORTANCE_LABEL[insight.importance] ?? insight.importance}
+            </Badge>
+            <span className="text-xs text-faint">
+              {INSIGHT_TYPE_LABEL[insight.type] ?? insight.type}
+            </span>
+            {insight.metric && (
+              <span className="text-xs tabular-nums text-faint">
+                {insight.metric}
+              </span>
+            )}
+          </div>
+          <h3 className="mt-2 text-[15px] font-semibold leading-snug text-ink">
+            {insight.title}
+          </h3>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-muted">
+            {insight.summary}
+          </p>
+          {insight.evidence_view_ids.length > 0 && (
+            <div className="mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className="text-xs text-faint">证据：</span>
+              {insight.evidence_view_ids.map((vid) => {
+                const evCard = artifact.views[vid];
+                if (!evCard) return null;
+                return (
+                  <button
+                    key={vid}
+                    onClick={() => onJump(vid)}
+                    className="text-xs font-medium text-apple underline-offset-2 hover:underline"
+                  >
+                    {evCard.title}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </Card>
   );
 }
@@ -229,13 +308,21 @@ export default function WorkbenchPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [viewingHistory, setViewingHistory] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
+  const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [highlightedView, setHighlightedView] = useState<string | null>(null);
+  const [showAllInsights, setShowAllInsights] = useState(false);
 
-  // 切换运行版本时折叠隐藏分析区、清除证据高亮
+  // 切换运行版本时折叠隐藏分析区、清除证据高亮与就地展开状态
   useEffect(() => {
     setShowHidden(false);
+    setRevealed(new Set());
     setHighlightedView(null);
+    setShowAllInsights(false);
   }, [artifact?.run_id]);
+
+  const revealItem = useCallback((id: string) => {
+    setRevealed((s) => new Set(s).add(id));
+  }, []);
 
   const loadInitial = useCallback(async () => {
     const { meta: m } = await api.getSession(sessionId);
@@ -544,41 +631,253 @@ export default function WorkbenchPage() {
                   </div>
                 )}
 
-                {artifact.sections
-                  .filter((s) => s.view_ids.length > 0)
-                  .map((section) => (
-                    <section key={section.section_id} className="mb-7">
-                      <h2 className="mb-4 text-lg font-semibold tracking-tight text-ink">
-                        {section.title}
-                      </h2>
-                      <div className="grid gap-5 lg:grid-cols-2">
-                        {section.view_ids.map((vid) => {
-                          const card = artifact.views[vid];
+                {artifact.insights.length > 0 && (
+                  <section className="mb-7">
+                    <SectionTitle
+                      title="核心洞察"
+                      desc="这份数据里最值得关注的几件事（按业务价值排序）。"
+                    />
+                    <div className="space-y-3.5">
+                      {artifact.insights
+                        .slice(0, showAllInsights ? undefined : 4)
+                        .map((ins, i) => (
+                          <InsightCard
+                            key={ins.insight_id}
+                            insight={ins}
+                            rank={i + 1}
+                            artifact={artifact}
+                            onJump={jumpToEvidence}
+                          />
+                        ))}
+                    </div>
+                    {artifact.insights.length > 4 && (
+                      <div className="mt-4 text-center">
+                        <button
+                          onClick={() => setShowAllInsights((v) => !v)}
+                          className="text-sm font-medium text-muted underline-offset-4 transition-colors hover:text-apple hover:underline"
+                        >
+                          {showAllInsights
+                            ? "收起洞察"
+                            : `展开全部洞察（${artifact.insights.length - 4}）`}
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                )}
+
+                <section className="mb-7">
+                  <h2 className="mb-4 text-lg font-semibold tracking-tight text-ink">
+                    关键发现
+                  </h2>
+                  <div className="space-y-4">
+                    {artifact.findings.length === 0 ? (
+                      <p className="text-sm text-faint">
+                        当前范围内未检测到显著信号。
+                      </p>
+                    ) : (
+                      artifact.findings.map((f) => (
+                        <Card key={f.finding_id}>
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            <Badge
+                              tone={IMPORTANCE_TONE[f.importance] ?? "neutral"}
+                            >
+                              {IMPORTANCE_LABEL[f.importance] ?? f.importance}
+                            </Badge>
+                            <h3 className="text-sm font-semibold text-ink">
+                              {f.title}
+                            </h3>
+                            <span className="text-xs text-faint">
+                              {FINDING_TYPE_LABEL[f.type] ?? f.type}
+                            </span>
+                          </div>
+                          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted">
+                            {f.summary}
+                          </p>
+                          {f.evidence_view_ids.length > 0 && (
+                            <div className="mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                              <span className="text-xs text-faint">证据：</span>
+                              {f.evidence_view_ids.map((vid) => {
+                                const evCard = artifact.views[vid];
+                                if (!evCard) return null;
+                                return (
+                                  <button
+                                    key={vid}
+                                    onClick={() => jumpToEvidence(vid)}
+                                    className="text-xs font-medium text-apple underline-offset-2 hover:underline"
+                                  >
+                                    {evCard.title}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </Card>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                {artifact.layout ? (
+                  <>
+                    {/* Insight-first：按 layout 的 order/role/col_span 真实渲染，
+                        Hero 全宽主图，Primary 次之，Supporting 降权，低价值默认折叠。 */}
+                    <div className="grid grid-cols-12 gap-4">
+                      {artifact.layout.items
+                        .filter(
+                          (it) =>
+                            it.role !== "kpi" && it.role !== "findings",
+                        )
+                        .map((it) => {
+                          const card = artifact.views[it.item_id];
                           if (!card) return null;
+                          const collapsed =
+                            it.default_hidden &&
+                            !revealed.has(it.item_id) &&
+                            !showHidden;
+                          const height =
+                            it.role === "hero"
+                              ? 380
+                              : it.role === "primary"
+                                ? 300
+                                : 260;
+                          const span = Math.max(
+                            1,
+                            Math.min(12, it.col_span || 12),
+                          );
                           return (
                             <div
-                              key={vid}
-                              id={`evidence-${vid}`}
-                              className={`scroll-mt-24 rounded-4xl transition-shadow duration-500 ${
-                                highlightedView === vid
+                              key={it.item_id}
+                              id={`evidence-${it.item_id}`}
+                              style={{
+                                gridColumn: `span ${span} / span ${span}`,
+                              }}
+                              className={`scroll-mt-24 transition-shadow duration-500 ${
+                                highlightedView === it.item_id
                                   ? "shadow-pop ring-2 ring-apple"
                                   : ""
                               }`}
                             >
-                              <ChartCardBlock
-                                card={card}
-                                runId={artifact.run_id}
-                              />
+                              {collapsed ? (
+                                <button
+                                  type="button"
+                                  onClick={() => revealItem(it.item_id)}
+                                  className="flex w-full items-center justify-between gap-3 text-left"
+                                >
+                                  <span className="min-w-0">
+                                    <span className="block truncate text-sm font-medium text-muted">
+                                      {card.title}
+                                    </span>
+                                    {card.interpretation && (
+                                      <span className="mt-1 block text-xs leading-relaxed text-faint">
+                                        {card.interpretation}
+                                      </span>
+                                    )}
+                                    <span className="mt-1 block text-xs text-faint">
+                                      {it.rationale}
+                                    </span>
+                                  </span>
+                                  <span className="shrink-0 text-xs font-medium text-apple">
+                                    展开
+                                  </span>
+                                </button>
+                              ) : (
+                                <>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <h3 className="text-sm font-semibold text-ink">
+                                        {card.title}
+                                      </h3>
+                                      {card.question && (
+                                        <p className="mt-1 text-xs text-faint">
+                                          {card.question}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <Badge
+                                      tone={
+                                        card.validity === "pass"
+                                          ? "green"
+                                          : "amber"
+                                      }
+                                    >
+                                      {card.validity}
+                                    </Badge>
+                                  </div>
+                                  {card.interpretation && (
+                                    <p className="mt-3 border-l-2 border-apple/40 pl-2.5 text-xs leading-relaxed text-muted">
+                                      {card.interpretation}
+                                    </p>
+                                  )}
+                                  <div className="mt-4">
+                                    <ViewChartCard
+                                      key={`${artifact.run_id}:${card.view_id}`}
+                                      card={card}
+                                      chartHeight={height}
+                                    />
+                                  </div>
+                                </>
+                              )}
                             </div>
                           );
                         })}
+                    </div>
+                    {artifact.layout.items.some((i) => i.default_hidden) && (
+                      <div className="mt-5 text-center">
+                        <button
+                          onClick={() => setShowHidden((v) => !v)}
+                          className="text-sm font-medium text-muted underline-offset-4 transition-colors hover:text-apple hover:underline"
+                        >
+                          {showHidden
+                            ? "收起全部隐藏分析"
+                            : `显示全部隐藏分析（${
+                                artifact.layout.items.filter(
+                                  (i) => i.default_hidden,
+                                ).length
+                              }）`}
+                        </button>
                       </div>
-                    </section>
-                  ))}
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {artifact.sections
+                      .filter((s) => s.view_ids.length > 0)
+                      .map((section) => (
+                        <section key={section.section_id} className="mb-7">
+                          <h2 className="mb-4 text-lg font-semibold tracking-tight text-ink">
+                            {section.title}
+                          </h2>
+                          <div className="grid gap-5 lg:grid-cols-2">
+                            {section.view_ids.map((vid) => {
+                              const card = artifact.views[vid];
+                              if (!card) return null;
+                              return (
+                                <div
+                                  key={vid}
+                                  id={`evidence-${vid}`}
+                                  className={`scroll-mt-24 rounded-4xl transition-shadow duration-500 ${
+                                    highlightedView === vid
+                                      ? "shadow-pop ring-2 ring-apple"
+                                      : ""
+                                  }`}
+                                >
+                                  <ChartCardBlock
+                                    card={card}
+                                    runId={artifact.run_id}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </section>
+                      ))}
+                  </>
+                )}
               </>
             )}
 
-            {Object.values(artifact.views).some((c) => c.default_hidden) && (
+            {!artifact.layout &&
+              Object.values(artifact.views).some((c) => c.default_hidden) && (
               <section className="mb-7">
                 <button
                   onClick={() => setShowHidden((v) => !v)}
@@ -628,55 +927,6 @@ export default function WorkbenchPage() {
               </section>
             )}
 
-            <section className="mb-8">
-              <h2 className="mb-4 text-lg font-semibold tracking-tight text-ink">
-                关键发现
-              </h2>
-              <div className="space-y-4">
-                {artifact.findings.length === 0 ? (
-                  <p className="text-sm text-faint">
-                    当前范围内未检测到显著信号。
-                  </p>
-                ) : (
-                  artifact.findings.map((f) => (
-                    <Card key={f.finding_id}>
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <Badge tone={IMPORTANCE_TONE[f.importance] ?? "neutral"}>
-                          {IMPORTANCE_LABEL[f.importance] ?? f.importance}
-                        </Badge>
-                        <h3 className="text-sm font-semibold text-ink">
-                          {f.title}
-                        </h3>
-                        <span className="text-xs text-faint">
-                          {FINDING_TYPE_LABEL[f.type] ?? f.type}
-                        </span>
-                      </div>
-                      <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted">
-                        {f.summary}
-                      </p>
-                      {f.evidence_view_ids.length > 0 && (
-                        <div className="mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                          <span className="text-xs text-faint">证据：</span>
-                          {f.evidence_view_ids.map((vid) => {
-                            const evCard = artifact.views[vid];
-                            if (!evCard) return null;
-                            return (
-                              <button
-                                key={vid}
-                                onClick={() => jumpToEvidence(vid)}
-                                className="text-xs font-medium text-apple underline-offset-2 hover:underline"
-                              >
-                                {evCard.title}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </Card>
-                  ))
-                )}
-              </div>
-            </section>
           </>
         )}
 

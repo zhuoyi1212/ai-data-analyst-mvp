@@ -6,7 +6,7 @@
     evidence   证据质量 —— 有效样本量（n、参与行数）；
     novelty    新证据 —— 同 (类型, 指标) 是否已存在；
     redundancy 冗余 —— 同 (业务族) 结果是否重复；
-    cost       展示成本友好度 —— 输出行数越少成本越低（越高分）。
+    display_friendliness 展示友好度 —— 输出行数越少越易读（越高分）。
 
 默认可见性：
 - presentation（Seed：核心 KPI / 双指标对齐趋势 / 一个基准拆分）始终默认可见，
@@ -34,7 +34,10 @@ from app.services.bundle_planner import _metric_score
 # 弱相关阈值：低于此值相关证据不占默认展示位（与 dashboard_insight.MIN_ABS_R 对齐）
 WEAK_ABS_R = 0.30
 
-_SCORE_KEYS = ("validity", "impact", "evidence", "novelty", "redundancy", "cost")
+_SCORE_KEYS = (
+    "validity", "impact", "evidence", "novelty", "redundancy",
+    "display_friendliness",
+)
 
 
 @dataclass(frozen=True)
@@ -77,7 +80,12 @@ def _family_signature(view: AnalysisView) -> tuple:
     return (t.value, dim, metric)
 
 
-def _cost_friendliness(rows: int) -> float:
+def _display_friendliness(rows: int) -> float:
+    """展示友好度：输出行数越少越易读（越高分）。
+
+    语义方向为正：rows 少 → 友好度高；行数多 → 友好度低。
+    评分处正向加权，避免"越易读反而被惩罚"的反向语义。
+    """
     if rows <= 12:
         return 1.0
     if rows <= 30:
@@ -128,10 +136,11 @@ def assess_view(view: AnalysisView, er: ViewExecutionResult) -> dict[str, float]
     evidence = _evidence_score(view, er, summary)
     novelty = 1.0  # 集体过滤时按实际重复情况下调
     redundancy = 1.0
-    cost = _cost_friendliness(er.result_rows_total)
+    display_friendliness = _display_friendliness(er.result_rows_total)
     return {
         "validity": validity, "impact": impact, "evidence": evidence,
-        "novelty": novelty, "redundancy": redundancy, "cost": cost,
+        "novelty": novelty, "redundancy": redundancy,
+        "display_friendliness": display_friendliness,
     }
 
 

@@ -24,25 +24,15 @@ from app.services.diagnostic_search import _now
 VISIBLE_PROBES = 4
 HERO_ROW_SPAN = 2
 
-# 读者价值的视图类型权重：回答业务问题的对比/趋势/拆解类靠前；
-# 离群明细标记表属于核查类中间产物，排后。
-_TYPE_BONUS: dict[str, float] = {
-    "trend": 0.12,
-    "comparison": 0.12,
-    "contribution": 0.10,
-    "rate_shift": 0.10,
-    "breakdown": 0.08,
-    "ranking": 0.08,
-    "overview": 0.05,
-    "profitability": 0.05,
-    "relationship": 0.0,
-    "anomaly": -0.30,
-}
-
 
 def _priority(
     card: ViewCard, signal_view_ids: set[str] | None = None
 ) -> float:
+    """视图优先级——只来自执行后的 value_scores，不再叠加 ViewType 固定权重。
+
+    Hero 必须出自真实分析结果的价值，而非"趋势/对比天生靠前"的类型优先级。
+    display_friendliness 正向加权：越易读越靠前（修复旧版 cost 反向语义 bug）。
+    """
     s = card.value_scores
     score = (
         0.45 * s.get("impact", 0.0)
@@ -50,9 +40,8 @@ def _priority(
         + 0.15 * s.get("novelty", 0.0)
         + 0.15 * s.get("validity", 0.0)
         - 0.20 * s.get("redundancy", 0.0)
-        - 0.10 * s.get("cost", 0.0)
+        + 0.10 * s.get("display_friendliness", 0.0)
     )
-    score += _TYPE_BONUS.get(card.type.value, 0.0)
     # 支撑了真实检测信号的视图：有证据链的高价值图，显著加权
     if signal_view_ids and card.view_id in signal_view_ids:
         score += 0.35
@@ -81,8 +70,13 @@ def compose_layout(
     findings: list[Any],
     chain_set: Any = None,
     signal_view_ids: set[str] | None = None,
+    featured_view_ids: list[str] | None = None,
 ) -> DashboardLayout:
-    """由 artifact 部件确定性组合布局。"""
+    """由 artifact 部件确定性组合布局。
+
+    featured_view_ids：按 Insight 最终评分排序的证据视图（Hero 优先来源）；
+    传入后 Hero/Primary/Supporting 由 Insight 证据顺序决定，而非类型固定优先级。
+    """
     raw: list[DashboardLayoutItem] = []
 
     # 1) KPI Strip：等宽，n*span ≤12
@@ -96,11 +90,18 @@ def compose_layout(
                 rationale=f"KPI 条：{kpi.label}",
             ))
 
-    # 2) 普通视图：可消费、默认可见，按价值排序
+    # 2) 普通视图：可消费、默认可见，按价值排序；
+    #    有 Insight 证据顺序时，按证据顺序优先（Hero 来自最强业务事实）。
+    featured_rank = {vid: i for i, vid in enumerate(featured_view_ids or [])}
+
+    def _sort_key(c: ViewCard) -> tuple:
+        rank = featured_rank.get(c.view_id, len(featured_rank))
+        return (rank, -_priority(c, signal_view_ids), c.view_id)
+
     view_candidates = sorted(
         (c for c in cards.values()
          if c.ref_type == "view" and c.consumable and not c.default_hidden),
-        key=lambda c: (-_priority(c, signal_view_ids), c.view_id),
+        key=_sort_key,
     )
 
     def _add(

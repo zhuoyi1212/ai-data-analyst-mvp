@@ -18,6 +18,7 @@ from app.schemas.bundle import (
     ValidationLevel,
 )
 from app.schemas.common import ChartType
+from app.schemas.insight_candidate import InsightCandidate
 
 # ----------------------------------------------------------------- 图表规格
 
@@ -271,6 +272,7 @@ class DashboardArtifact(BaseModel):
     kpis: list[KPI] = Field(default_factory=list)
     sections: list[DashboardSection] = Field(default_factory=list)
     views: dict[str, ViewCard] = Field(default_factory=dict)  # T06：视图字典
+    insights: list[InsightCandidate] = Field(default_factory=list)  # Insight-first：业务事实（评分排序）
     findings: list[Finding] = Field(default_factory=list)
     risks: list[Finding] = Field(default_factory=list)  # findings 中 type=="risk" 子集
     failed_views: list[FailedView] = Field(default_factory=list)

@@ -137,6 +137,7 @@ class ViewCard(BaseModel):
     section_id: str | None = None
     chart_spec: ChartSpec | None = None
     data: ViewDataEnvelope | None = None
+    interpretation: str = ""          # 一句话读图指引（中文，数字来自该视图）
     status: ViewStatus
     validity: str = "unknown"          # pass/warn/fail/no_data；status≠success 时 unknown
     consumable: bool = False

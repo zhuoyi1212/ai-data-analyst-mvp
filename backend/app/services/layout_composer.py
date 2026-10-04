@@ -24,10 +24,27 @@ from app.services.diagnostic_search import _now
 VISIBLE_PROBES = 4
 HERO_ROW_SPAN = 2
 
+# 读者价值的视图类型权重：回答业务问题的对比/趋势/拆解类靠前；
+# 离群明细标记表属于核查类中间产物，排后。
+_TYPE_BONUS: dict[str, float] = {
+    "trend": 0.12,
+    "comparison": 0.12,
+    "contribution": 0.10,
+    "rate_shift": 0.10,
+    "breakdown": 0.08,
+    "ranking": 0.08,
+    "overview": 0.05,
+    "profitability": 0.05,
+    "relationship": 0.0,
+    "anomaly": -0.30,
+}
 
-def _priority(card: ViewCard) -> float:
+
+def _priority(
+    card: ViewCard, signal_view_ids: set[str] | None = None
+) -> float:
     s = card.value_scores
-    return (
+    score = (
         0.45 * s.get("impact", 0.0)
         + 0.25 * s.get("evidence", 0.0)
         + 0.15 * s.get("novelty", 0.0)
@@ -35,6 +52,11 @@ def _priority(card: ViewCard) -> float:
         - 0.20 * s.get("redundancy", 0.0)
         - 0.10 * s.get("cost", 0.0)
     )
+    score += _TYPE_BONUS.get(card.type.value, 0.0)
+    # 支撑了真实检测信号的视图：有证据链的高价值图，显著加权
+    if signal_view_ids and card.view_id in signal_view_ids:
+        score += 0.35
+    return score
 
 
 def _probe_order(chain_set: Any) -> tuple[list[str], dict[str, str]]:
@@ -58,6 +80,7 @@ def compose_layout(
     cards: dict[str, ViewCard],
     findings: list[Any],
     chain_set: Any = None,
+    signal_view_ids: set[str] | None = None,
 ) -> DashboardLayout:
     """由 artifact 部件确定性组合布局。"""
     raw: list[DashboardLayoutItem] = []
@@ -77,7 +100,7 @@ def compose_layout(
     view_candidates = sorted(
         (c for c in cards.values()
          if c.ref_type == "view" and c.consumable and not c.default_hidden),
-        key=lambda c: (-_priority(c), c.view_id),
+        key=lambda c: (-_priority(c, signal_view_ids), c.view_id),
     )
 
     def _add(
@@ -95,7 +118,8 @@ def compose_layout(
         _add(
             hero, "hero", 12, row_span=HERO_ROW_SPAN,
             rationale=(
-                f"综合价值最高的视图（优先级 {_priority(hero):.2f}），"
+                f"综合价值最高的视图（优先级 "
+                f"{_priority(hero, signal_view_ids):.2f}），"
                 "作为主图全宽展示。"
             ),
         )
@@ -103,7 +127,8 @@ def compose_layout(
             _add(
                 card, "primary", 6,
                 rationale=(
-                    f"高优先级视图（优先级 {_priority(card):.2f}），"
+                    f"高优先级视图（优先级 "
+                    f"{_priority(card, signal_view_ids):.2f}），"
                     "与主图互补的核心视角。"
                 ),
             )
@@ -111,7 +136,8 @@ def compose_layout(
             _add(
                 card, "supporting", 4,
                 rationale=(
-                    f"支撑视图（优先级 {_priority(card):.2f}），"
+                    f"支撑视图（优先级 "
+                    f"{_priority(card, signal_view_ids):.2f}），"
                     "补充其他维度与结构信息。"
                 ),
             )
@@ -119,7 +145,8 @@ def compose_layout(
             _add(
                 card, "supporting", 4,
                 rationale=(
-                    f"次级支撑视图（优先级 {_priority(card):.2f}），"
+                    f"次级支撑视图（优先级 "
+                    f"{_priority(card, signal_view_ids):.2f}），"
                     "优先级较低，默认折叠可展开。"
                 ),
                 hidden=True,
@@ -148,7 +175,7 @@ def compose_layout(
     hidden_cards = sorted(
         (c for c in cards.values()
          if c.view_id not in placed and c.consumable),
-        key=lambda c: (-_priority(c), c.view_id),
+        key=lambda c: (-_priority(c, signal_view_ids), c.view_id),
     )
     for card in hidden_cards:
         reason = "；".join(card.hide_reasons) or "价值评估较低"

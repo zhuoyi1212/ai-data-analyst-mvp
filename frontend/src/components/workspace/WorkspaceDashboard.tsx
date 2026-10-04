@@ -220,6 +220,11 @@ export function WorkspaceDashboard({
                       <span className="text-sm font-medium text-muted">
                         {dashboard.views[item.item_id]?.title ?? item.item_id}
                       </span>
+                      {dashboard.views[item.item_id]?.interpretation && (
+                        <span className="mt-1 block text-xs leading-relaxed text-muted">
+                          {dashboard.views[item.item_id]?.interpretation}
+                        </span>
+                      )}
                       <span className="mt-1 block text-xs text-faint">
                         {item.rationale}
                       </span>
@@ -250,6 +255,11 @@ export function WorkspaceDashboard({
                         </button>
                       )}
                     </div>
+                    {dashboard.views[item.item_id]?.interpretation && (
+                      <p className="mb-3 border-l-2 border-apple/40 pl-2.5 text-xs leading-relaxed text-muted">
+                        {dashboard.views[item.item_id]?.interpretation}
+                      </p>
+                    )}
                     <ViewChartCard
                       card={dashboard.views[item.item_id]}
                       chartHeight={item.role === "hero" ? 380 : 280}

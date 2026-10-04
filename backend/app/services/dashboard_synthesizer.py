@@ -51,6 +51,8 @@ from app.services.period_compare import PeriodCompareError, period_comparison
 from app.services.storage import SessionStore, StaleRunError, StorageError
 from app.services.value_filter import ValueAssessment, filter_run
 from app.services.view_data import build_envelope
+from app.services.field_labels import field_label, humanize_text
+from app.services.card_interpretation import interpret_view
 
 MAX_PROBES = 3
 
@@ -342,6 +344,7 @@ def _build_view_cards(
     run_id: str,
     specs: dict[str, ChartSpec],
     assessments: dict[str, ValueAssessment],
+    dictionary: DataDictionary,
 ) -> dict[str, ViewCard]:
     """视图字典：每个 View 一卡自足（图表 + 数据 + 口径 + 状态）。
 
@@ -354,7 +357,8 @@ def _build_view_cards(
         er = results.get(view.view_id)
         assess = assessments.get(view.view_id)
         common = dict(
-            view_id=view.view_id, title=view.title, question=view.question,
+            view_id=view.view_id, title=humanize_text(view.title),
+            question=view.question,
             type=view.type, section_id=_section_for_type(view.type),
             metric_label=view.metric_fields[0] if view.metric_fields else "",
             role=view.role,
@@ -381,9 +385,31 @@ def _build_view_cards(
             continue
         df = _view_result(store, sid, view)
         data_ref = f"/sessions/{sid}/runs/{run_id}/views/{view.view_id}/rows"
+
+        # 输出列中文名：value/share 锚定视图主指标；其余列查词典/字典 meaning
+        metric_context = view.metric_fields[0] if view.metric_fields else None
+
+        def _col_label(col: str) -> str:
+            if col in ("value", "share"):
+                return field_label(col, metric_context=metric_context)
+            fp = dictionary.field(col)
+            return field_label(
+                col, meaning=fp.meaning if fp is not None else None
+            )
+
+        column_labels = {str(col): _col_label(str(col)) for col in df.columns}
+        interpretation = interpret_view(
+            view_type=view.type.value, df=df,
+            metric_fields=view.metric_fields,
+            dimension_fields=view.dimension_fields,
+            title_hint=view.title,
+        )
         cards[view.view_id] = ViewCard(
             **common, chart_spec=specs.get(view.view_id),
-            data=build_envelope(view.type.value, df, data_ref),
+            data=build_envelope(
+                view.type.value, df, data_ref, column_labels
+            ),
+            interpretation=interpretation,
             status=er.status, validity=er.validity, consumable=True,
             checks=er.checks,
         )
@@ -420,8 +446,9 @@ def _build_probe_cards(
             params = json.loads(ppath.read_text())["steps"][-1]["params"]
             dim = params["dimension"]
             metric = params.get("metric") or ""
+            dim_cn = field_label(dim)
             spec = ChartSpec(
-                type="bar", title=f"{dim} 分组对比",
+                type="bar", title=f"{dim_cn} 分组对比",
                 x_field=dim, y_fields=["value"], dimension=dim,
                 metric=metric, interactive=True,
             )
@@ -429,12 +456,24 @@ def _build_probe_cards(
                 f"/sessions/{sid}/runs/{run_id}"
                 f"/diagnostic/probes/{pid}/rows"
             )
+            column_labels = {
+                dim: dim_cn,
+                "value": field_label("value", metric_context=metric or None),
+            }
             cards[pid] = ViewCard(
                 view_id=pid, ref_type="probe",
-                title=f"{dim} 分组对比", question=f"按 {dim} 分组对比",
+                title=f"{dim_cn} 分组对比",
+                question=f"按 {dim_cn} 分组对比",
                 type=ViewType.breakdown, section_id="diagnosis",
                 chart_spec=spec,
-                data=build_envelope("aggregate", df, data_ref),
+                data=build_envelope(
+                    "aggregate", df, data_ref, column_labels
+                ),
+                interpretation=interpret_view(
+                    view_type="comparison", df=df,
+                    metric_fields=[metric] if metric else [],
+                    dimension_fields=[dim],
+                ),
                 status=ViewStatus.success, validity="pass", consumable=True,
                 metric_label=metric, role="computation",
                 default_hidden=True,
@@ -542,7 +581,8 @@ def synthesize_dashboard(
 
     sections = _build_sections(bundle, consumable_ids)
     cards = _build_view_cards(
-        session_id, store, bundle, views, execution, run_id, specs, assessments
+        session_id, store, bundle, views, execution, run_id, specs, assessments,
+        dictionary,
     )
     selected_by_col = {
         str(f.get("column", "")): [str(v) for v in f.get("values", [])]
@@ -604,8 +644,21 @@ def synthesize_dashboard(
         all_cards.update(
             _build_probe_cards(session_id, store, run_id, chain_set)
         )
+
+    # 与真实信号/发现关联的视图：它们「有说法、有证据」，排序应靠前
+    signal_view_ids: set[str] = set()
+    try:
+        sig_payload = store.read_artifact(session_id, "signals")
+        for sig in sig_payload["signals"]:
+            signal_view_ids.update(sig["scan_view_ids"])
+    except StorageError:
+        pass
+    for f in findings:
+        signal_view_ids.update(f.evidence_view_ids)
+
     layout = compose_layout(
         kpis=kpis, cards=all_cards, findings=findings, chain_set=chain_set,
+        signal_view_ids=signal_view_ids,
     )
 
     artifact = DashboardArtifact(

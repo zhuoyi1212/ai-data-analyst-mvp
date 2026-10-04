@@ -268,6 +268,7 @@ export interface ViewCard {
   section_id: string | null;
   chart_spec: ChartSpec | null;
   data: ViewDataEnvelope | null;
+  interpretation?: string;
   status: string;
   validity: string;
   consumable: boolean;

@@ -41,10 +41,16 @@ def _column_dtype(s: pd.Series) -> str:
     return "string"
 
 
-def build_columns(df: pd.DataFrame) -> list[ColumnSchema]:
-    """输出数据列 schema：name 是唯一允许的绘图字段引用。"""
+def build_columns(
+    df: pd.DataFrame, labels: dict[str, str] | None = None
+) -> list[ColumnSchema]:
+    """输出数据列 schema：name 是唯一允许的绘图字段引用；label 为中文展示名。"""
+    labels = labels or {}
     return [
-        ColumnSchema(name=str(col), dtype=_column_dtype(df[col]), label=str(col))
+        ColumnSchema(
+            name=str(col), dtype=_column_dtype(df[col]),
+            label=labels.get(str(col), str(col)),
+        )
         for col in df.columns
     ]
 
@@ -93,9 +99,10 @@ def build_envelope(
     view_type: str,
     df: pd.DataFrame,
     data_ref: str,
+    column_labels: dict[str, str] | None = None,
 ) -> ViewDataEnvelope:
     """按 View 类型构建自足数据信封。data_ref 为运行内稳定 API 路径。"""
-    columns = build_columns(df)
+    columns = build_columns(df, column_labels)
 
     if view_type == "relationship":
         total = len(df.index)

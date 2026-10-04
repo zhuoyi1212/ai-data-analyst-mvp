@@ -67,6 +67,21 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
   const spec = card.chart_spec;
   if (!spec) return null;
 
+  // 字段物理名 → 中文含义（由后端根据词典/数据字典生成）
+  const labels = new Map(
+    (card.data?.columns ?? []).map((c) => [c.name, c.label || c.name]),
+  );
+  const cn = (name: string) => labels.get(name) ?? name;
+  const axisLabelStyle = { fontSize: 11, fill: AXIS } as const;
+  const tooltipFormatter = (
+    value: string | number | (string | number)[], name: string,
+  ) => [
+    typeof value === "number"
+      ? value.toLocaleString()
+      : Array.isArray(value) ? value.join(", ") : String(value),
+    cn(name),
+  ];
+
   switch (spec.type) {
     case "bar":
     case "share_bar":
@@ -75,21 +90,36 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
         <ResponsiveContainer width="100%" height={chartHeight}>
           <BarChart
             data={rows}
-            margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+            margin={{ top: 12, right: 16, bottom: 20, left: 4 }}
           >
             <CartesianGrid stroke={GRID} vertical={false} />
             <XAxis
               dataKey={spec.x_field ?? undefined}
               {...axisProps}
               axisLine={{ stroke: GRID }}
+              label={{
+                value: spec.x_field ? cn(spec.x_field) : "",
+                position: "insideBottom", offset: -18,
+                ...axisLabelStyle,
+              }}
             />
-            <YAxis {...axisProps} axisLine={false} />
+            <YAxis
+              {...axisProps}
+              axisLine={false}
+              label={{
+                value: spec.y_fields[0] ? cn(spec.y_fields[0]) : "",
+                angle: -90, position: "insideTopLeft", offset: 12,
+                ...axisLabelStyle,
+              }}
+            />
             <Tooltip
               contentStyle={tooltipStyle}
               cursor={{ fill: "rgba(0,113,227,0.06)" }}
+              formatter={tooltipFormatter}
             />
             <Bar
               dataKey={spec.y_fields[0]}
+              name={cn(spec.y_fields[0])}
               fill={ACCENT}
               radius={[6, 6, 0, 0]}
               maxBarSize={56}
@@ -117,7 +147,7 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip contentStyle={tooltipStyle} />
+            <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
           </PieChart>
         </ResponsiveContainer>
       );
@@ -127,7 +157,7 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
         <ResponsiveContainer width="100%" height={chartHeight}>
           <LineChart
             data={rows}
-            margin={{ top: 8, right: 16, bottom: 8, left: 0 }}
+            margin={{ top: 12, right: 16, bottom: 20, left: 4 }}
           >
             <CartesianGrid stroke={GRID} vertical={false} />
             <XAxis
@@ -135,12 +165,29 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
               {...axisProps}
               axisLine={{ stroke: GRID }}
               minTickGap={24}
+              label={{
+                value: spec.x_field ? cn(spec.x_field) : "",
+                position: "insideBottom", offset: -18,
+                ...axisLabelStyle,
+              }}
             />
-            <YAxis {...axisProps} axisLine={false} />
-            <Tooltip contentStyle={tooltipStyle} />
+            <YAxis
+              {...axisProps}
+              axisLine={false}
+              label={{
+                value: spec.y_fields[0] ? cn(spec.y_fields[0]) : "",
+                angle: -90, position: "insideTopLeft", offset: 12,
+                ...axisLabelStyle,
+              }}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              formatter={tooltipFormatter}
+            />
             <Line
               type="monotone"
               dataKey={spec.y_fields[0]}
+              name={cn(spec.y_fields[0])}
               stroke={ACCENT}
               strokeWidth={2.5}
               dot={false}
@@ -152,24 +199,39 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
     case "scatter":
       return (
         <ResponsiveContainer width="100%" height={chartHeight + 20}>
-          <ScatterChart margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+          <ScatterChart margin={{ top: 12, right: 16, bottom: 24, left: 4 }}>
             <CartesianGrid stroke={GRID} />
             <XAxis
               dataKey={spec.x_field ?? ""}
               type="number"
               {...axisProps}
               axisLine={{ stroke: GRID }}
+              label={{
+                value: spec.x_field ? cn(spec.x_field) : "",
+                position: "insideBottom", offset: -18,
+                ...axisLabelStyle,
+              }}
             />
             <YAxis
               dataKey={spec.y_fields[0]}
               {...axisProps}
               axisLine={false}
+              label={{
+                value: spec.y_fields[0] ? cn(spec.y_fields[0]) : "",
+                angle: -90, position: "insideTopLeft", offset: 12,
+                ...axisLabelStyle,
+              }}
             />
             <Tooltip
               contentStyle={tooltipStyle}
               cursor={{ strokeDasharray: "3 3", stroke: AXIS }}
+              formatter={tooltipFormatter}
             />
-            <Scatter data={rows} fill={ACCENT} />
+            <Scatter
+              data={rows}
+              fill={ACCENT}
+              name={cn(spec.y_fields[0])}
+            />
           </ScatterChart>
         </ResponsiveContainer>
       );

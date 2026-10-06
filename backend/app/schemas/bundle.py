@@ -116,7 +116,10 @@ class ViewValidationItem(BaseModel):
     """View 级轻量校验项（P0：coverage/shape/null_handling/reconciliation）。"""
 
     model_config = _STRICT
-    code: Literal["coverage", "shape", "null_handling", "reconciliation"]
+    code: Literal[
+        "coverage", "shape", "null_handling", "reconciliation",
+        "relationship_stability",
+    ]
     level: ValidationLevel
     detail: str = ""
     numbers: dict[str, Any] = Field(default_factory=dict)

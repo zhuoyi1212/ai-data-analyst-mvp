@@ -293,6 +293,14 @@ def op_compare_groups(df: pd.DataFrame, p: Any) -> OpResult:
 
 # ---------------------------------------------------------------- 9. correlation
 
+# T10：相关结论的稳定性门槛（自动发现/报告门禁引用；算子本身仍按 n≥3 给原始值）。
+MIN_CORRELATION_PAIRS = 8   # 允许作为「关系结论」展示的最小有效对数
+LOO_STRONG_R = 0.70         # 全样本 |r| 达到此值才算「看起来很强」
+LOO_FRAGILE_R = 0.50        # 剔除影响最大的单点后 |r| 跌破此值 → 关系不稳
+LOO_MIN_DELTA = 0.20        # 且该单点造成的 |Δr| 至少这么大才判定为单点主导
+SPEARMAN_EXACT_LOO_MAX_N = 200  # 此 n 以下 Spearman 逐点精确重排秩；以上走全样本秩近似
+
+
 def _pearson_r(x: pd.Series, y: pd.Series) -> float:
     """纯 numpy Pearson，不依赖 scipy（锁文件全新环境也确定可用）。"""
     xa = x.to_numpy(dtype=float)
@@ -303,6 +311,126 @@ def _pearson_r(x: pd.Series, y: pd.Series) -> float:
     if denom == 0:
         return float("nan")
     return float((xc * yc).sum() / denom)
+
+
+def _loo_r_pearson(xa: np.ndarray, ya: np.ndarray) -> np.ndarray:
+    """留一 Pearson r 数组（充分统计量恒等式，精确且 O(n)）。
+
+    Sxx_{-i} = Sxx − n/(n−1)·(x_i−x̄)²；Sxy 同理。剔除后成常量列的点给 nan。
+    """
+    n = len(xa)
+    xc = xa - xa.mean()
+    yc = ya - ya.mean()
+    sxx = float((xc ** 2).sum())
+    syy = float((yc ** 2).sum())
+    sxy = float((xc * yc).sum())
+    k = n / (n - 1)
+    sxx_i = sxx - k * xc ** 2
+    syy_i = syy - k * yc ** 2
+    sxy_i = sxy - k * xc * yc
+    denom = np.sqrt(sxx_i * syy_i)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(denom > 0, sxy_i / denom, np.nan)
+
+
+def _loo_r_spearman(pairs: pd.DataFrame) -> tuple[np.ndarray, bool]:
+    """留一 Spearman。n≤200 逐点剔除后重排平均秩（精确）；否则在全样本秩上
+    走充分统计量恒等式（近似：剔除一个结只引起 1/n 量级的秩位移）。
+    """
+    n = len(pairs)
+    if n <= SPEARMAN_EXACT_LOO_MAX_N:
+        out = np.empty(n)
+        for i in range(n):
+            ranked = pairs.drop(index=pairs.index[i]).rank(method="average")
+            out[i] = _pearson_r(ranked["x"], ranked["y"])
+        return out, True
+    ranked = pairs[["x", "y"]].rank(method="average")
+    return _loo_r_pearson(
+        ranked["x"].to_numpy(dtype=float),
+        ranked["y"].to_numpy(dtype=float),
+    ), False
+
+
+def _correlation_sensitivity(
+    method: str, pairs: pd.DataFrame, r: float
+) -> dict:
+    """留一（leave-one-out）稳定性检验：单个异常点能否制造/摧毁该相关性。
+
+    状态：
+    - single_point_driven：全样本 |r|≥0.70、剔除最敏感单点后 |r|<0.50 且 |Δr|≥0.20
+      —— 自动链路必须拒绝作为关系结论（T10 假相关反例）；
+    - insufficient_n：有效对数 < 8，不做 LOO，自动链路同样拒绝（小样本巧合）；
+    - ok：通过留一检验（或 inconclusive：全部剔除都导致常量列，无法判定）。
+    """
+    n = len(pairs)
+    base = {
+        "kind": "leave_one_out",
+        "min_pairs_for_claim": MIN_CORRELATION_PAIRS,
+        "thresholds": {
+            "strong_r": LOO_STRONG_R, "fragile_r": LOO_FRAGILE_R,
+            "min_delta": LOO_MIN_DELTA,
+        },
+    }
+    if n < MIN_CORRELATION_PAIRS:
+        return {
+            **base, "status": "insufficient_n", "loo_exact": None,
+            "max_abs_delta_r": None, "most_influential_index": None,
+            "r_without_most_influential": None,
+            "note": (
+                f"有效样本仅 {n} 对（少于 {MIN_CORRELATION_PAIRS} 对），"
+                "小样本相关系数极易偶然接近 ±1，不做留一稳定性检验，"
+                "也不得作为关系结论。"),
+        }
+
+    if method == "spearman":
+        r_loo, exact = _loo_r_spearman(pairs)
+    else:
+        r_loo = _loo_r_pearson(
+            pairs["x"].to_numpy(dtype=float),
+            pairs["y"].to_numpy(dtype=float),
+        )
+        exact = True
+
+    valid = ~np.isnan(r_loo)
+    if not valid.any():
+        return {
+            **base, "status": "inconclusive", "loo_exact": exact,
+            "max_abs_delta_r": None, "most_influential_index": None,
+            "r_without_most_influential": None,
+            "note": "剔除任意一对后均出现常量列，留一稳定性无法判定。",
+        }
+
+    deltas = np.abs(r - r_loo)
+    deltas[~valid] = -1.0
+    idx = int(np.argmax(deltas))
+    max_delta = float(abs(r - r_loo[idx]))
+    r_without = float(r_loo[idx])
+    driven = (
+        abs(r) >= LOO_STRONG_R
+        and abs(r_without) < LOO_FRAGILE_R
+        and max_delta >= LOO_MIN_DELTA
+    )
+    status = "single_point_driven" if driven else "ok"
+    if driven:
+        note = (
+            f"全样本 r={r:.2f}（n={n}）看似显著，但剔除影响最大的第 {idx + 1} 对"
+            f"数据后 r={r_without:.2f}（|Δr|={max_delta:.2f}），相关性由单个异常点"
+            "主导，不构成稳定关系，自动分析不得据此下关系结论；请先在异常分析中"
+            "复核该数据点。"
+        )
+    else:
+        note = (
+            f"留一检验通过：剔除任意单点后 r 最大变化 {max_delta:.2f}，"
+            "相关性不依赖单个数据点。"
+            + ("" if exact else "（大样本 Spearman 基于全样本秩近似）")
+        )
+    return {
+        **base, "status": status, "loo_exact": exact,
+        "max_abs_delta_r": round(max_delta, 6),
+        "most_influential_index": idx,
+        "r_without_most_influential": round(r_without, 6),
+        "note": note,
+    }
 
 
 def op_correlation(df: pd.DataFrame, p: Any) -> OpResult:
@@ -321,9 +449,14 @@ def op_correlation(df: pd.DataFrame, p: Any) -> OpResult:
         r = _pearson_r(pairs["x"], pairs["y"])
     if np.isnan(r):
         raise EngineError("相关系数无法计算（可能存在常量列）。")
+    sensitivity = _correlation_sensitivity(method, pairs, r)
     out = pairs.rename(columns={"x": p.column_x, "y": p.column_y}).reset_index(drop=True)
     formula = f"{method} 相关系数（{p.column_x}，{p.column_y}），n={len(pairs)}"
-    return OpResult(out, formula, {"coefficient": r, "n": len(pairs), "method": method})
+    return OpResult(
+        out, formula,
+        {"coefficient": r, "n": len(pairs), "method": method,
+         "sensitivity": sensitivity},
+    )
 
 
 # ---------------------------------------------------------------- 10. outlier_flag

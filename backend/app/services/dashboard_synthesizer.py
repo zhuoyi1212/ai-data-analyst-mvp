@@ -381,9 +381,15 @@ def _build_view_cards(
             )
             continue
         if not er.consumable:
+            # T10：拒绝原因必须具体（如假相关/小样本），取最差校验项的中文说明
+            worst = next(
+                (c for c in er.checks if c.level in ("fail", "no_data")), None
+            )
             cards[view.view_id] = ViewCard(
                 **common, status=er.status, validity=er.validity,
-                consumable=False, reason="该视角无有效数据，不进入展示。",
+                consumable=False,
+                reason=(worst.detail if worst and worst.detail
+                        else "该视角无有效数据，不进入展示。"),
                 checks=er.checks,
             )
             continue

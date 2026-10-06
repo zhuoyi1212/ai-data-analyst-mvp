@@ -28,7 +28,7 @@ from app.schemas.bundle import (
     ViewValidationItem,
 )
 from app.schemas.ledger import Ledger
-from app.services.engine.ops import EngineError
+from app.services.engine.ops import MIN_CORRELATION_PAIRS, EngineError
 from app.services.executor import clean_rows, execute_plan
 from app.services.planner import plan_hash
 from app.services.storage import SessionStore
@@ -46,8 +46,57 @@ def _participating_rows(records, snapshot_rows: int) -> int:
     return int(records[-1].input_rows) if records else snapshot_rows
 
 
+def _relationship_stability_check(
+    view: AnalysisView, records: list
+) -> ViewValidationItem | None:
+    """T10：相关结论稳定性门禁（与 KPI/Chart/Finding 共享 consumable 门禁）。
+
+    - 有效对数 < MIN_CORRELATION_PAIRS：小样本巧合，拒绝作为关系结论；
+    - 留一检验判定 single_point_driven：异常点制造的假相关，拒绝并给中文解释。
+    散点图原始结果仍保留在视图字典（可被追问/异常复核），只是不可消费。
+    """
+    if view.type is not ViewType.relationship or not records:
+        return None
+    summary = records[-1].summary or {}
+    n = summary.get("n")
+    sensitivity = summary.get("sensitivity") or {}
+    status = sensitivity.get("status")
+
+    if n is not None and int(n) < MIN_CORRELATION_PAIRS:
+        return ViewValidationItem(
+            code="relationship_stability", level="fail",
+            detail=(
+                f"有效样本仅 {int(n)} 对（至少需要 {MIN_CORRELATION_PAIRS} 对），"
+                "小样本相关系数极易偶然接近 ±1，不作为关系结论展示；"
+                "原始散点仍可在视图字典中查看。"
+            ),
+            numbers={"n": int(n), "min_pairs": MIN_CORRELATION_PAIRS,
+                     "sensitivity_status": status or "insufficient_n"},
+        )
+    if status == "single_point_driven":
+        r = float(summary.get("coefficient", 0.0))
+        r_loo = float(sensitivity.get("r_without_most_influential", 0.0))
+        return ViewValidationItem(
+            code="relationship_stability", level="fail",
+            detail=(
+                f"相关性由单个异常点主导：全样本 r={r:.2f}（n={int(n)}），"
+                f"剔除影响最大的第 {int(sensitivity.get('most_influential_index', 0)) + 1} "
+                f"对数据后 r={r_loo:.2f}，不构成稳定关系，已禁止作为相关结论；"
+                "建议先在异常分析中复核该数据点（原始散点保留在视图字典）。"
+            ),
+            numbers={
+                "n": int(n), "coefficient": r,
+                "r_without_most_influential": r_loo,
+                "max_abs_delta_r": sensitivity.get("max_abs_delta_r"),
+                "most_influential_index": sensitivity.get("most_influential_index"),
+            },
+        )
+    return None
+
+
 def _checks(
-    view: AnalysisView, result: pd.DataFrame, participating_rows: int
+    view: AnalysisView, result: pd.DataFrame, participating_rows: int,
+    records: list | None = None,
 ) -> list[ViewValidationItem]:
     checks: list[ViewValidationItem] = []
 
@@ -123,6 +172,11 @@ def _checks(
                 detail="各分组份额合计为 100%，与总体回总一致",
                 numbers={"share_sum": share_sum},
             ))
+
+    # relationship_stability（T10）：小样本 / 单点主导的假相关一律 fail
+    stability = _relationship_stability_check(view, records or [])
+    if stability is not None:
+        checks.append(stability)
     return checks
 
 
@@ -167,7 +221,7 @@ def _execute_one(
         )
 
     participating_rows = _participating_rows(records, snapshot_rows)
-    checks = _checks(view, result, participating_rows)
+    checks = _checks(view, result, participating_rows, records)
 
     # 落盘：结果 parquet + 台账 + 校验（写盘失败同样收敛为 failed）
     try:

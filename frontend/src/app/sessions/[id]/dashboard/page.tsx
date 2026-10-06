@@ -719,10 +719,12 @@ export default function WorkbenchPage() {
 
                 {artifact.layout ? (
                   <>
-                    {/* Insight-first：按 layout 的 order/role/col_span 真实渲染，
-                        Hero 全宽主图，Primary 次之，Supporting 降权，低价值默认折叠。 */}
+                    {/* Insight-first：按 layout 的 order 排序 + role/col_span/row_span
+                        真实渲染。Hero 全宽主图且更高（row_span=2），Primary 次之，
+                        Supporting 降权，低价值默认折叠。 */}
                     <div className="grid grid-cols-12 gap-4">
-                      {artifact.layout.items
+                      {[...artifact.layout.items]
+                        .sort((a, b) => a.order - b.order)
                         .filter(
                           (it) =>
                             it.role !== "kpi" && it.role !== "findings",
@@ -734,12 +736,17 @@ export default function WorkbenchPage() {
                             it.default_hidden &&
                             !revealed.has(it.item_id) &&
                             !showHidden;
-                          const height =
+                          // row_span 表示纵向跨行数（Hero=2 应更高一档）：以其乘算
+                          // role 基准高度，使 row_span 真实参与渲染。Hero=2×190=380
+                          // 与既往一致，不回退视觉；后端改 row_span 时表现随之变化。
+                          const roleBase =
                             it.role === "hero"
-                              ? 380
+                              ? 190
                               : it.role === "primary"
                                 ? 300
                                 : 260;
+                          const height =
+                            roleBase * Math.max(1, it.row_span || 1);
                           const span = Math.max(
                             1,
                             Math.min(12, it.col_span || 12),

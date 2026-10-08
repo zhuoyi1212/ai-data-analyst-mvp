@@ -11,6 +11,7 @@ node_modules/
 # 密钥与运行时存储
 .env
 .env.*
+!.env.example
 backend/storage/
 
 # 用户临时测试文件（项目根目录散落的数据文件，示例数据在 sample_data/ 内）

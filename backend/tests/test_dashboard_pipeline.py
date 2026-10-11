@@ -9,7 +9,10 @@ from app.schemas.bundle import ViewType
 from app.schemas.dashboard import DashboardArtifact
 from app.services.bundle_executor import execute_bundle
 from app.services.bundle_planner import build_bundle
-from app.services.dashboard_synthesizer import synthesize_dashboard
+from app.services.dashboard_synthesizer import (
+    _fill_blank_dimensions,
+    synthesize_dashboard,
+)
 from app.services.profiler import confirm_fields, generate_dictionary
 from app.services.quality_actions import apply_decisions
 from app.services.quality_checker import run_quality_checks
@@ -97,9 +100,9 @@ def test_dashboard_artifact_full_pipeline(tmp_path):
     # computation 证据任务同样全部执行（阴性结果保留可按需返回）
     assert executed == {v["view_id"] for v in bundle["analysis_views"]}
 
-    # KPI：Sales / Profit 总览 + 利润率 KPI（=ΣProfit/ΣSales，单位 %）
+    # KPI：销售额 / 利润 总览 + 利润率 KPI（=ΣProfit/ΣSales，单位 %）
     labels = [k.label for k in artifact.kpis]
-    assert "Sales" in labels and "Profit" in labels and "利润率" in labels
+    assert "销售额" in labels and "利润" in labels and "利润率" in labels
     snap = store.load_snapshot(sid)
     expected_margin = float(snap["Profit"].sum() / snap["Sales"].sum())
     margin_kpi = next(k for k in artifact.kpis if k.label == "利润率")
@@ -134,7 +137,7 @@ def test_findings_detect_divergence_negative_member_and_correlation(tmp_path):
     assert div, "应产出量利背离 finding"
     d = div[0]
     assert "Tables" in d.title and "Tables" in d.summary
-    assert "Sub-Category" in d.summary
+    assert "子类别" in d.summary
     assert d.importance == "high"
     assert len(d.evidence_view_ids) == 2
     # 合并后保留亏损风险的四要素文案
@@ -152,7 +155,7 @@ def test_findings_detect_divergence_negative_member_and_correlation(tmp_path):
     # 3) Discount × Profit 强负相关 → risk 文案 + 因果免责语
     corr = [f for f in findings if f.evidence_view_ids and f.title.startswith("负相关")]
     assert corr, "应产出负相关风险 finding"
-    assert "Discount" in corr[0].summary and "因果" in corr[0].summary
+    assert "折扣" in corr[0].summary and "因果" in corr[0].summary
 
     # risks 是 findings 的 type==risk 子集
     assert {f.finding_id for f in artifact.risks} == {
@@ -176,3 +179,10 @@ def test_probe_artifacts_are_isolated_and_budgeted(tmp_path):
         assert (p / "plan.json").exists()
         assert (p / "result.parquet").exists()
         assert (p / "ledger.json").exists()
+
+
+def test_fill_blank_dimensions_labels_nan():
+    # CSV 空单元格 → NaN 的维度值，在展示层归为「未填写」，避免图表出现 "nan"
+    df = pd.DataFrame({"区域": ["华东", None, "华南"], "value": [1.0, 2.0, 3.0]})
+    out = _fill_blank_dimensions(df, ["区域"])
+    assert list(out["区域"]) == ["华东", "未填写", "华南"]

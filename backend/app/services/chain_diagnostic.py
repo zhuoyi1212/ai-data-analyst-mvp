@@ -34,6 +34,7 @@ from app.schemas.diagnostic import (
 from app.schemas.dictionary import DataDictionary
 from app.services.bundle_planner import _spec_func
 from app.services.diagnostic_search import ROOT_ID, DiagnosticController, _now
+from app.services.field_labels import field_label
 from app.services.metric_spec import effective_metric_spec
 from app.services.storage import SessionStore
 
@@ -73,16 +74,28 @@ def _controller_metric(signal: Signal, dictionary: DataDictionary) -> str | None
 
 
 def _root_question(signal: Signal) -> str:
-    metric = signal.metric
+    metric = field_label(signal.metric)
+    dimension = field_label(signal.dimension) if signal.dimension else signal.dimension
     if signal.type == "decline":
         change = signal.magnitude.change_pct
         tail = f"（环比 {abs(change):.1f}%）" if change is not None else ""
         return f"为什么「{metric}」环比下滑{tail}？"
     if signal.type == "growth":
         return f"「{metric}」增长的驱动来自哪里？"
-    if signal.type in ("negative_member", "divergence"):
+    if signal.type == "divergence":
+        # 量利背离：成员利润为正但利润份额落后收入份额，问「错配」而非「为负」。
+        gap = signal.magnitude.gap_pp
+        tail = (
+            f"（利润份额落后收入份额 {abs(gap):.0f} 个百分点）"
+            if gap is not None else ""
+        )
         return (
-            f"为什么「{signal.dimension}={signal.member}」的"
+            f"为什么「{dimension}={signal.member}」的利润贡献"
+            f"低于其收入规模{tail}？"
+        )
+    if signal.type == "negative_member":
+        return (
+            f"为什么「{dimension}={signal.member}」的"
             f"「{metric}」为负？"
         )
     if signal.type == "scale_profit":

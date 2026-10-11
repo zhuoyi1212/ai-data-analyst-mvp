@@ -45,14 +45,19 @@ def interpret_view(
     metric_fields: list[str] | None = None,
     dimension_fields: list[str] | None = None,
     title_hint: str = "",
+    metric_label: str = "",
 ) -> str:
-    """按视图类型与真实结果生成一句话解读。空/缺列时安全降级。"""
+    """按视图类型与真实结果生成一句话解读。空/缺列时安全降级。
+
+    metric_label：已解析的中文指标名（派生比率视图传「利润率」等）；
+    为空时回退按 metric_fields 推断，避免把利润率图写成「利润」。
+    """
     metric_fields = metric_fields or []
     dimension_fields = dimension_fields or []
     if df is None or df.empty:
         return ""
 
-    metric = _label_of(metric_fields[0]) if metric_fields else "指标"
+    metric = metric_label or (_label_of(metric_fields[0]) if metric_fields else "指标")
 
     # ---- 时间序列优先：即使 bundle 把时间列放进了 dimension_fields ----
     if view_type == "trend" and "value" in df.columns:
@@ -94,11 +99,12 @@ def interpret_view(
                 )
 
         if view_type in ("ranking", "top_n"):
-            # 标题含 Bottom：榜单是倒序的，文案语义相应反转
+            # 标题含 Bottom：榜单按值升序，最差的是最小值（bottom_*），
+            # 而不是 _extreme 降序取的首个（最大值）。
             if "bottom" in title_hint.lower():
                 return (
-                    f"{metric}末 {len(df)} 位：{top_label} 表现最差"
-                    f"（{_num(top_v)}），用于定位拖累最大的{dim_name}。"
+                    f"{metric}末 {len(df)} 位：{bottom_label} 表现最差"
+                    f"（{_num(bottom_v)}），用于定位拖累最大的{dim_name}。"
                 )
             return (
                 f"{metric}排名（前 {len(df)} 位）：首位 {top_label}"

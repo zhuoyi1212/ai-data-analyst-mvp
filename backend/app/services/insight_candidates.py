@@ -26,6 +26,7 @@ from app.schemas.common import ChartType
 from app.schemas.dashboard import Finding
 from app.schemas.insight_candidate import InsightCandidate, InsightImportance
 from app.services.dashboard_insight import _load
+from app.services.field_labels import field_label, humanize_text
 from app.services.storage import SessionStore
 
 # 信号类型 → 业务事实类型（1:1 确定性映射；correlation 按符号二分）
@@ -37,6 +38,18 @@ _SIGNAL_TO_INSIGHT: dict[str, str] = {
     "scale_profit": "divergence",
     "simpson": "divergence",
     "anomaly": "anomaly",
+}
+
+# 信号类型 → 中文名（fallback 摘要用，避免把内部类型名泄漏给用户）
+_SIGNAL_TYPE_ZH: dict[str, str] = {
+    "growth": "增长",
+    "decline": "下滑",
+    "anomaly": "异常",
+    "divergence": "量利背离",
+    "scale_profit": "增收不增利",
+    "simpson": "结构悖论",
+    "correlation": "关联",
+    "negative_member": "亏损",
 }
 
 # 业务事实 → 推荐图表（Insight → Chart，服务结论而非图表多样性）
@@ -142,7 +155,8 @@ def _signals_to_drafts(signals: list[Signal], findings: list[Finding]) -> list[_
         title = f.title if f is not None else f"{sig.metric} 出现显著变化"
         summary = (
             f.summary if f is not None
-            else f"现象：{sig.metric} 出现 {sig.type} 信号，详情见证据视图。"
+            else f"现象：{sig.metric} 出现"
+                 f"{_SIGNAL_TYPE_ZH.get(sig.type, sig.type)}信号，详情见证据视图。"
         )
         drafts.append(_Draft(
             type=insight_type,
@@ -385,7 +399,11 @@ def score_and_rank(
         ),
     )
 
-    # 4) 统一编号（排序后）
+    # 4) 统一编号（排序后）+ 中文名归一（标题/摘要/指标名不再暴露英文物理字段）
     for i, c in enumerate(order, start=1):
         c.insight_id = f"ins_{i:02d}"
+        c.title = humanize_text(c.title)
+        c.summary = humanize_text(c.summary)
+        if c.metric:
+            c.metric = field_label(c.metric)
     return order

@@ -102,13 +102,45 @@ _REPLACEMENT = sorted(
     key=lambda kv: -len(kv[0]),
 )
 
+# 多词/连字符/斜杠形式的字段名整短语替换（humanize_text 先于逐词替换），
+# 避免 "Ship Mode" 被逐词译成「配送 方式」（带空格）。
+_PHRASES = sorted(
+    {
+        "ship mode": "配送方式",
+        "sub-category": "子类别",
+        "order date": "订单日期",
+        "ship date": "发货日期",
+        "customer id": "客户编号",
+        "customer name": "客户姓名",
+        "product id": "产品编号",
+        "product name": "产品名称",
+        "postal code": "邮政编码",
+        "row id": "行编号",
+        "order id": "订单编号",
+        "country/region": "国家区域",
+        "state/province": "省/州",
+    }.items(),
+    key=lambda kv: -len(kv[0]),
+)
+
+
+def tighten_cjk(text: str) -> str:
+    """去掉中文字符之间的空格（中文排版不需要，英文模板插值后常残留）。"""
+    return re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", text)
+
 
 def humanize_text(text: str) -> str:
     """把中文标题/问题中夹杂的英文业务词替换为中文（如 region→区域）。"""
     def repl(m: re.Match) -> str:
         return _WORDS[m.group(0).lower()]
 
+    for ph, zh in _PHRASES:
+        text = re.sub(re.escape(ph), zh, text, flags=re.IGNORECASE)
+
     for en, _zh in _REPLACEMENT:
         text = re.sub(rf"(?<![A-Za-z]){re.escape(en)}(?![A-Za-z])", repl, text,
                       flags=re.IGNORECASE)
-    return text
+
+    # 去掉中文字符之间的空格：模板按英文词设计（如「贡献 {metric} 的」），
+    # metric 中文化后残留「贡献 利润 的」这类空格。
+    return tighten_cjk(text)

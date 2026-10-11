@@ -144,3 +144,48 @@ def test_interpret_empty_df_safe():
     assert interpret_view(
         view_type="trend", df=pd.DataFrame(), metric_fields=["sales"],
     ) == ""
+
+
+def test_humanize_text_multiwort_phrase():
+    # 多词字段名整短语替换，避免 "Ship Mode" 被逐词译成「配送 方式」
+    out = humanize_text("各「Ship Mode」的「Profit」对比")
+    assert "配送方式" in out
+    assert "利润" in out
+    assert "配送 方式" not in out
+    assert "Ship" not in out and "Mode" not in out and "Profit" not in out
+
+
+def test_humanize_text_removes_cjk_cjk_spaces():
+    # 模板按英文词设计（「贡献 {metric} 的」），中文化后不应残留中文间空格
+    assert "贡献利润的" in humanize_text("Top 3 「Ship Mode」贡献 Profit 的 94%")
+    assert "利润与销售额" in humanize_text("Profit 与 Sales 的份额")
+
+
+def test_interpret_ranking_bottom_worst_is_min():
+    # Bottom 榜单按值升序，「最差」应是最小值，而不是 _extreme 降序取的首个最大值
+    df = pd.DataFrame({
+        "city": ["Chicago", "Philadelphia"],
+        "value": [-6654.57, -13837.77],
+    })
+    text = interpret_view(
+        view_type="ranking", df=df,
+        metric_fields=["profit"], dimension_fields=["city"],
+        title_hint="「City」「Profit」Bottom 5",
+    )
+    assert "Philadelphia 表现最差" in text
+    assert "Chicago 表现最差" not in text
+
+
+def test_interpret_profitability_uses_metric_label():
+    # 利润率视图应读作「利润率」，而非分子字段名「利润」
+    df = pd.DataFrame({
+        "category": ["Technology", "Furniture"],
+        "value": [0.174, 0.026],
+    })
+    text = interpret_view(
+        view_type="profitability", df=df,
+        metric_fields=["Profit", "Sales"], dimension_fields=["category"],
+        metric_label="利润率",
+    )
+    assert "利润率" in text
+    assert "对比各类别的利润：" not in text

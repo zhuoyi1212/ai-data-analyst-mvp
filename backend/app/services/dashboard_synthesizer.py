@@ -55,7 +55,7 @@ from app.services.period_compare import PeriodCompareError, period_comparison
 from app.services.storage import SessionStore, StaleRunError, StorageError
 from app.services.value_filter import ValueAssessment, filter_run
 from app.services.view_data import build_envelope
-from app.services.field_labels import field_label, humanize_text
+from app.services.field_labels import field_label, humanize_text, tighten_cjk
 from app.services.card_interpretation import interpret_view
 
 MAX_PROBES = 3
@@ -193,10 +193,11 @@ def _build_kpis(
                 if pc["completeness"] != "complete":
                     hint = "当期未结束，按截至日等长窗口比较"
         kpis.append(KPI(
-            label=metric, value=value,
+            label=field_label(metric), value=value,
             change=change, change_type=change_type,
             change_delta=delta, change_status=status or "",
-            change_hint=hint or "", unit="",
+            change_hint=hint or "",
+            unit=(spec.unit or "") if spec else "",
         ))
 
     # 派生比率 KPI（第一版：利润率）——无轴单值 probe，口径 Σnum/Σden
@@ -339,6 +340,35 @@ def _section_for_type(t: ViewType) -> str | None:
     return None
 
 
+def _derived_ratio_label(
+    dictionary: DataDictionary, numerator: str | None, denominator: str | None
+) -> str | None:
+    """按 (分子, 分母) 匹配派生比率注册表，返回中文标签（如「利润率」）。"""
+    if numerator is None or denominator is None:
+        return None
+    for spec in detect_derived_metrics(dictionary):
+        if spec.numerator == numerator and spec.denominator == denominator:
+            return spec.label
+    return None
+
+
+_BLANK_DIM_LABEL = "未填写"
+
+
+def _fill_blank_dimensions(
+    df: pd.DataFrame, dimension_fields: list[str]
+) -> pd.DataFrame:
+    """分类维度空值（CSV 空单元格被解析成 NaN）在展示层归为「未填写」。
+
+    避免分组/排名图的维度轴与读图指引出现 "nan"。只改展示副本，不改快照，
+    下钻/筛选仍按原始值（NaN 分组）计算，不影响经营事实。
+    """
+    for dim in dimension_fields:
+        if dim in df.columns:
+            df[dim] = df[dim].where(df[dim].notna(), _BLANK_DIM_LABEL)
+    return df
+
+
 def _build_view_cards(
     sid: str,
     store: SessionStore,
@@ -394,10 +424,20 @@ def _build_view_cards(
             )
             continue
         df = _view_result(store, sid, view)
+        df = _fill_blank_dimensions(df, view.dimension_fields)
         data_ref = f"/sessions/{sid}/runs/{run_id}/views/{view.view_id}/rows"
 
-        # 输出列中文名：value/share 锚定视图主指标；其余列查词典/字典 meaning
-        metric_context = view.metric_fields[0] if view.metric_fields else None
+        # 输出列中文名：value/share 锚定视图主指标；其余列查词典/字典 meaning。
+        # 派生比率（利润率）视图的 value 列应锚定「利润率」而非分子字段名。
+        if view.type is ViewType.profitability:
+            params = view.plan.steps[-1].params
+            metric_context = _derived_ratio_label(
+                dictionary,
+                getattr(params, "numerator", None),
+                getattr(params, "denominator", None),
+            ) or (view.metric_fields[0] if view.metric_fields else None)
+        else:
+            metric_context = view.metric_fields[0] if view.metric_fields else None
 
         def _col_label(col: str) -> str:
             if col in ("value", "share"):
@@ -408,12 +448,13 @@ def _build_view_cards(
             )
 
         column_labels = {str(col): _col_label(str(col)) for col in df.columns}
-        interpretation = interpret_view(
+        interpretation = tighten_cjk(interpret_view(
             view_type=view.type.value, df=df,
             metric_fields=view.metric_fields,
             dimension_fields=view.dimension_fields,
             title_hint=view.title,
-        )
+            metric_label=column_labels.get("value", ""),
+        ))
         cards[view.view_id] = ViewCard(
             **common, chart_spec=specs.get(view.view_id),
             data=build_envelope(
@@ -456,6 +497,7 @@ def _build_probe_cards(
             params = json.loads(ppath.read_text())["steps"][-1]["params"]
             dim = params["dimension"]
             metric = params.get("metric") or ""
+            df = _fill_blank_dimensions(df, [dim])
             dim_cn = field_label(dim)
             spec = ChartSpec(
                 type="bar", title=f"{dim_cn} 分组对比",
@@ -479,11 +521,11 @@ def _build_probe_cards(
                 data=build_envelope(
                     "aggregate", df, data_ref, column_labels
                 ),
-                interpretation=interpret_view(
+                interpretation=tighten_cjk(interpret_view(
                     view_type="comparison", df=df,
                     metric_fields=[metric] if metric else [],
                     dimension_fields=[dim],
-                ),
+                )),
                 status=ViewStatus.success, validity="pass", consumable=True,
                 metric_label=metric, role="computation",
                 default_hidden=True,

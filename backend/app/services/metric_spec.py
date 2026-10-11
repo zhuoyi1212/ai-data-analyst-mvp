@@ -28,6 +28,7 @@ _SCORE_RE = re.compile(
 _RATE_RE = re.compile(
     r"(conversion[_ ]?rate|转化率|点击率|到达率|留存率| churn|"
     r"profit[_ ]?margin|利润率|毛利率|净利率|折扣率|discount[_ ]?rate|"
+    r"单价|价格|(?:unit[_ ]?)?price|"
     r"率$|比率|rate$|ratio$|占比$|percent|pct$)",
     re.I,
 )

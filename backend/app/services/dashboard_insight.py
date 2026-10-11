@@ -39,6 +39,7 @@ from app.schemas.plan import (
     GroupByStep,
 )
 from app.services.derived_metrics import detect_derived_metrics
+from app.services.field_labels import humanize_text
 from app.services.storage import SessionStore
 
 MIN_ABS_R = 0.30       # 相关显著阈值
@@ -744,6 +745,9 @@ def detect_findings(
     merged = merge_same_question(raw)
     for i, f in enumerate(merged, start=1):
         f.finding_id = f"finding_{i:02d}"
+        # 标题/摘要中英文业务字段名统一转中文（成员值如 Furniture 是数据，保留原样）
+        f.title = humanize_text(f.title)
+        f.summary = humanize_text(f.summary)
     return merged
 
 

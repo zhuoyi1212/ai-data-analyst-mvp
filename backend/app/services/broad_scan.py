@@ -26,6 +26,7 @@ from app.schemas.dictionary import DataDictionary, FieldProfile
 from app.services.bundle_planner import (
     Candidate,
     CandidateGenerator,
+    _metric_score,
     _ranked_metrics,
     _to_view,
 )
@@ -155,6 +156,10 @@ def _rank_key(category: str, c: Candidate) -> tuple:
             c.hint.get("dimension") or "",
             1 if c.hint.get("order") == "asc" else 0,
         )
+    if category == "kpi":
+        # KPI 概览按业务价值降序（P&L > 量级 > 其余），
+        # 避免把收入/金额被字符编码序挤出，或把「单价」类均值指标排第一。
+        return (0, -_metric_score(c.metric_fields[0] if c.metric_fields else ""))
     return (c.priority_group, c.metric_fields[0] if c.metric_fields else "")
 
 

@@ -132,3 +132,18 @@ def test_scan_executes_clean_on_all_samples(tmp_path):
         assert result.failed == 0, (
             name, [v for v in result.views if v.status != "success"]
         )
+
+
+# ------------------------------------------------------------ KPI 排序
+
+
+def test_scan_kpi_overviews_ordered_by_business_value(tmp_path):
+    """overview 按业务价值（P&L > 量级 > 其余）排序，而非字符编码序。"""
+    store, sid, dictionary, snapshot = _ready_session("sales_orders", tmp_path)
+
+    bundle = plan_scan(dictionary, snapshot)
+    overviews = [v for v in bundle.analysis_views if v.type is ViewType.overview]
+    metrics = [v.metric_fields[0] for v in overviews]
+
+    # 金额（P&L 价值分 4）> 数量（量级 3）> 单价（均值类 1）
+    assert metrics == ["金额", "数量", "单价"]

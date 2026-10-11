@@ -126,3 +126,47 @@ def test_empty_signal_set_produces_no_chains(tmp_path):
     assert chain_set.chains == []
     assert chain_set.budget["used_probes"] == 0
     assert chain_set.budget["used_terminal_executions"] == 0
+
+
+# ------------------------------------------------------------ 根问题语义
+
+
+def test_root_question_divergence_not_negative():
+    """量利背离（利润为正但份额落后）不应被问成「为什么为负」。"""
+    from app.schemas.auto import Magnitude, ScoreBreakdown, Signal
+    from app.services.chain_diagnostic import _root_question
+
+    sig = Signal(
+        signal_id="s1", type="divergence", scan_view_ids=["v1"],
+        metric="Profit", dimension="Category", member="Furniture",
+        direction="down",
+        magnitude=Magnitude(metric="Profit", value=19730.0, gap_pp=-25.69),
+        score=0.76,
+        score_breakdown=ScoreBreakdown(
+            impact=1.0, concentration=0.16, novelty=0.9, support=0.9,
+        ),
+    )
+    q = _root_question(sig)
+    assert "为负" not in q
+    assert "利润贡献" in q and "收入规模" in q
+    assert "26 个百分点" in q  # |−25.69| → 26
+
+
+def test_root_question_negative_member_keeps_negative():
+    """亏损成员仍应明确问「为负」。"""
+    from app.schemas.auto import Magnitude, ScoreBreakdown, Signal
+    from app.services.chain_diagnostic import _root_question
+
+    sig = Signal(
+        signal_id="s2", type="negative_member", scan_view_ids=["v1"],
+        metric="Profit", dimension="Category", member="Tables",
+        direction="negative",
+        magnitude=Magnitude(metric="Profit", value=-17753.0),
+        score=0.8,
+        score_breakdown=ScoreBreakdown(
+            impact=1.0, concentration=0.5, novelty=0.5, support=0.9,
+        ),
+    )
+    q = _root_question(sig)
+    assert "为负" in q
+    assert "类别=Tables" in q

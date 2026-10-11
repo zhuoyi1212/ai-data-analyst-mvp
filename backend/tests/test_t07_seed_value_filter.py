@@ -252,9 +252,9 @@ def test_m1_trend_finding_detected_when_secondary_metric_declines():
     _, _, artifact = _build_artifact(pd.DataFrame(rows))
 
     declines = [f for f in artifact.findings if f.type == "decline"]
-    assert any("Profit" in f.title for f in declines), (
+    assert any("利润" in f.title for f in declines), (
         f"第二核心指标 Profit 明显下滑却零信号，实际："
         f"{[f.title for f in artifact.findings]}"
     )
     # Sales 平稳，不凑增长 Finding
-    assert not any("Sales" in f.title for f in declines)
+    assert not any("销售额" in f.title for f in declines)

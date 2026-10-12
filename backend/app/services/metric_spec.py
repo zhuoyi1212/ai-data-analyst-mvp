@@ -103,3 +103,19 @@ def infer_metric_spec(field: FieldProfile) -> MetricSpec | None:
 def effective_metric_spec(field: FieldProfile) -> MetricSpec | None:
     """用户确认优先，其次规则推断。"""
     return field.metric_spec or infer_metric_spec(field)
+
+
+# profiler（LLM）可能返回的语义描述词 → 可展示单位。
+# 「货币/比例」是描述不是符号，展示层不能把它们当前缀拼在数字前。
+_UNIT_DESCRIPTORS: dict[str, str] = {
+    "货币": "", "currency": "", "金额": "", "money": "", "cash": "",
+    "比例": "%", "ratio": "%", "占比": "%", "percentage": "%", "percent": "%",
+}
+
+
+def display_unit(unit: str | None) -> str:
+    """把字段单位规范成可直接展示的形式（空串=无单位，% 归一等）。"""
+    if not unit:
+        return ""
+    key = unit.strip().lower()
+    return _UNIT_DESCRIPTORS.get(key, unit.strip())

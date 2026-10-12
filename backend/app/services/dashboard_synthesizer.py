@@ -28,6 +28,8 @@ from app.schemas.bundle import (
 from app.schemas.dashboard import (
     AppliedFilter,
     ChartSpec,
+    CollapseGroup,
+    CollapseMember,
     DashboardArtifact,
     DashboardScope,
     DashboardSection,
@@ -49,13 +51,14 @@ from app.services.bundle_planner import (
 from app.services.layout_composer import compose_layout
 from app.services.derived_metrics import detect_derived_metrics
 from app.services.executor import execute_plan
-from app.services.metric_spec import effective_metric_spec
+from app.services.metric_spec import display_unit, effective_metric_spec
 from app.services.offline_fallback import build_plan
 from app.services.period_compare import PeriodCompareError, period_comparison
 from app.services.storage import SessionStore, StaleRunError, StorageError
 from app.services.value_filter import ValueAssessment, filter_run
 from app.services.view_data import build_envelope
 from app.services.field_labels import field_label, humanize_text, tighten_cjk
+from app.services.theme_composer import derive_themes
 from app.services.card_interpretation import interpret_view
 
 MAX_PROBES = 3
@@ -197,7 +200,7 @@ def _build_kpis(
             change=change, change_type=change_type,
             change_delta=delta, change_status=status or "",
             change_hint=hint or "",
-            unit=(spec.unit or "") if spec else "",
+            unit=display_unit(spec.unit) if spec else "",
         ))
 
     # 派生比率 KPI（第一版：利润率）——无轴单值 probe，口径 Σnum/Σden
@@ -367,6 +370,45 @@ def _fill_blank_dimensions(
         if dim in df.columns:
             df[dim] = df[dim].where(df[dim].notna(), _BLANK_DIM_LABEL)
     return df
+
+
+# 可折叠成「一张图 + 维度选择器」的视图类型（同指标 × 同类型 × 不同维度）
+_COLLAPSABLE_TYPES = {ViewType.comparison, ViewType.breakdown}
+_COLLAPSE_TYPE_ZH = {ViewType.comparison: "对比", ViewType.breakdown: "结构"}
+
+
+def _build_collapse_groups(cards: dict[str, ViewCard]) -> list[CollapseGroup]:
+    """把「同指标 × 同类型 × 不同维度」的可见展示视图折叠成一组。"""
+    from collections import defaultdict
+
+    groups: dict[tuple, list[ViewCard]] = defaultdict(list)
+    for c in cards.values():
+        if c.role != "presentation" or not c.consumable or c.default_hidden:
+            continue
+        if c.type not in _COLLAPSABLE_TYPES or not c.metric_label:
+            continue
+        groups[(c.metric_label, c.type)].append(c)
+
+    out: list[CollapseGroup] = []
+    for (metric_raw, vtype), members in groups.items():
+        if len(members) < 2:
+            continue
+        members_sorted = sorted(members, key=lambda c: c.view_id)
+        out.append(CollapseGroup(
+            group_id=f"collapse_{len(out) + 1:02d}",
+            label=f"{field_label(metric_raw)}{_COLLAPSE_TYPE_ZH[vtype]}",
+            members=[
+                CollapseMember(
+                    view_id=m.view_id,
+                    dimension_label=(
+                        field_label(m.chart_spec.dimension)
+                        if m.chart_spec and m.chart_spec.dimension else "维度"
+                    ),
+                )
+                for m in members_sorted
+            ],
+        ))
+    return out
 
 
 def _build_view_cards(
@@ -736,6 +778,27 @@ def synthesize_dashboard(
         signal_view_ids=signal_view_ids, featured_view_ids=featured_view_ids,
     )
 
+    # AI 业务主题：把可见展示视图按业务问题分组（LLM 命名/归类，规则回退按指标）
+    theme_views: list[dict[str, str]] = []
+    for c in all_cards.values():
+        if c.role != "presentation" or not c.consumable or c.default_hidden:
+            continue
+        spec = c.chart_spec
+        theme_views.append({
+            "view_id": c.view_id,
+            "title": c.title,
+            "question": humanize_text(c.question) if c.question else c.title,
+            "metric": field_label(c.metric_label) if c.metric_label else "",
+            "dimension": field_label(spec.dimension) if spec and spec.dimension else "",
+        })
+    themes = derive_themes(
+        theme_views,
+        base=(bundle.title or "dashboard").rsplit(".", 1)[0],
+    )
+
+    # 维度折叠：把「同指标 × 同类型 × 不同维度」的可见视图折叠成一张图 + 维度选择器
+    collapse_groups = _build_collapse_groups(all_cards)
+
     artifact = DashboardArtifact(
         run_id=run_id,
         bundle_id=bundle.bundle_id,
@@ -750,6 +813,8 @@ def synthesize_dashboard(
         risks=risks,
         failed_views=failed_views,
         global_filters=filters,
+        themes=themes,
+        collapse_groups=collapse_groups,
         layout=layout,
     )
     # expected_run_id：迟到的合成响应若发现 active 已前进，绝不回切 current

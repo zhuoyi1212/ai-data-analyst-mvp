@@ -261,6 +261,40 @@ class RefineRequest(BaseModel):
 DashboardState = Literal["ready", "partial", "empty"]
 
 
+class DashboardTheme(BaseModel):
+    """业务主题：把可见图表按「用户关心的业务问题」分组（AI 生成，规则回退按指标）。
+
+    name 是用户视角的中文主题名（如「销售表现」「利润与盈利」），
+    不是「趋势/结构/诊断」这类分析师技术词。view_ids 引用 views 字典中的可消费视图。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    theme_id: str
+    name: str
+    view_ids: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+
+class CollapseMember(BaseModel):
+    """折叠组中的一个维度变体：同一指标 × 同一类型，只是维度不同。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    view_id: str
+    dimension_label: str  # 中文维度名（如「客户细分」「类别」）
+
+
+class CollapseGroup(BaseModel):
+    """维度折叠组：把「同指标 × 同类型 × 不同维度」的视图折叠成一张图 + 维度选择器。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    group_id: str
+    label: str  # 如「利润对比」「销售额结构」
+    members: list[CollapseMember] = Field(default_factory=list)
+
+
 class DashboardArtifact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -277,6 +311,8 @@ class DashboardArtifact(BaseModel):
     risks: list[Finding] = Field(default_factory=list)  # findings 中 type=="risk" 子集
     failed_views: list[FailedView] = Field(default_factory=list)
     global_filters: list[FilterDefinition] = Field(default_factory=list)
+    themes: list[DashboardTheme] = Field(default_factory=list)  # AI 业务主题分类
+    collapse_groups: list[CollapseGroup] = Field(default_factory=list)  # 维度折叠组
     layout: "DashboardLayout | None" = None  # Task 7：12-column 组合布局
 
 

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type {
+  CollapseGroup,
   DashboardArtifact,
   FilterDefinition,
 } from "@/lib/types";
@@ -28,7 +29,14 @@ export function WorkspaceDashboard({
   const [askBusy, setAskBusy] = useState(false);
   const [question, setQuestion] = useState("");
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<string>("重点");
   const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // 运行版本切换时回到「重点」并清空展开状态
+  useEffect(() => {
+    setActiveTab("重点");
+    setRevealed(new Set());
+  }, [dashboard.run_id]);
 
   // 高亮联动：滚入视口 + 描边，短暂后清除
   useEffect(() => {
@@ -105,8 +113,44 @@ export function WorkspaceDashboard({
   }, [question, sessionId, onReloaded]);
 
   const layout = dashboard.layout;
-  const hiddenCount =
-    layout?.items.filter((i) => i.default_hidden).length ?? 0;
+  const themes = dashboard.themes ?? [];
+  const layoutItems = layout?.items ?? [];
+  const collapseGroups = dashboard.collapse_groups ?? [];
+  const collapsedIds = new Set(
+    collapseGroups.flatMap((g) => g.members.map((m) => m.view_id)),
+  );
+
+  // KPI 条与隐藏证据不受主题过滤影响；其余按 activeTab 过滤
+  const kpiItems = layoutItems.filter((i) => i.role === "kpi");
+  const hiddenItems = layoutItems.filter((i) => i.default_hidden);
+
+  const contentItems = (() => {
+    if (themes.length === 0) {
+      return layoutItems.filter(
+        (i) => i.role !== "kpi" && !i.default_hidden && !collapsedIds.has(i.item_id),
+      );
+    }
+    if (activeTab === "重点") {
+      const rank = (r: string) =>
+        r === "findings" ? 0 : r === "hero" ? 1 : r === "primary" ? 2 : 3;
+      return layoutItems
+        .filter(
+          (i) =>
+            (i.role === "findings" || i.role === "hero" || i.role === "primary") &&
+            !collapsedIds.has(i.item_id),
+        )
+        .sort((a, b) => rank(a.role) - rank(b.role));
+    }
+    const theme = themes.find((t) => t.name === activeTab);
+    return theme
+      ? layoutItems.filter(
+          (i) => theme.view_ids.includes(i.item_id) && !collapsedIds.has(i.item_id),
+        )
+      : [];
+  })();
+
+  const filteredItems = [...kpiItems, ...contentItems, ...hiddenItems];
+  const hiddenCount = hiddenItems.length;
 
   return (
     <div>
@@ -168,10 +212,43 @@ export function WorkspaceDashboard({
         </div>
       )}
 
+      {/* ------------------------------------------- 业务主题分段 */}
+      {layout && dashboard.state !== "empty" && themes.length > 0 && (
+        <div className="mt-6 flex flex-wrap items-center gap-1.5 rounded-full bg-canvas p-1">
+          {["重点", ...themes.map((t) => t.name)].map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`rounded-full px-4 py-1.5 text-xs font-medium transition-all ${
+                activeTab === tab
+                  ? "bg-white text-ink shadow-sm"
+                  : "text-muted hover:text-ink"
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ------------------------------------------- 维度折叠 */}
+      {collapseGroups.length > 0 && (
+        <div className="mt-6 grid grid-cols-12 gap-4">
+          {collapseGroups.map((group) => (
+            <CollapseCard
+              key={`${dashboard.run_id}:${group.group_id}`}
+              group={group}
+              dashboard={dashboard}
+            />
+          ))}
+        </div>
+      )}
+
       {/* ------------------------------------------- 12-column 网格 */}
       {layout && dashboard.state !== "empty" && (
         <div className="mt-6 grid grid-cols-12 gap-4">
-          {layout.items.map((item) => {
+          {filteredItems.map((item) => {
             const isKpi = item.role === "kpi";
             const isFindings = item.role === "findings";
             const collapsed =
@@ -302,7 +379,56 @@ export function WorkspaceDashboard({
   );
 }
 
+// ----------------------------------------------------------------- 维度折叠卡
+
+function CollapseCard({
+  group, dashboard,
+}: { group: CollapseGroup; dashboard: DashboardArtifact }) {
+  const [activeId, setActiveId] = useState(group.members[0]?.view_id ?? "");
+  const card = dashboard.views[activeId];
+  if (!card) return null;
+  return (
+    <div className="col-span-12 rounded-3xl border border-hairline bg-white p-5 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold tracking-tight text-ink">
+          {group.label}
+        </h3>
+        <div className="flex flex-wrap items-center gap-1 rounded-full bg-canvas p-1">
+          {group.members.map((m) => (
+            <button
+              key={m.view_id}
+              type="button"
+              onClick={() => setActiveId(m.view_id)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
+                activeId === m.view_id
+                  ? "bg-white text-ink shadow-sm"
+                  : "text-muted hover:text-ink"
+              }`}
+            >
+              {m.dimension_label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {card.interpretation && (
+        <p className="mt-2 border-l-2 border-apple/40 pl-2.5 text-xs leading-relaxed text-muted">
+          {card.interpretation}
+        </p>
+      )}
+      <div className="mt-4">
+        <ViewChartCard card={card} chartHeight={300} />
+      </div>
+    </div>
+  );
+}
+
 // ----------------------------------------------------------------- KPI 条
+
+function fmtKpi(value: number, unit: string): string {
+  if (unit === "%") return `${(value * 100).toFixed(1)}%`;
+  const num = value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return unit ? `${unit}${num}` : num;
+}
 
 function KpiPanel({
   index, dashboard,
@@ -318,7 +444,7 @@ function KpiPanel({
         {kpi.value === null ? (
           <span className="text-base text-faint">不可计算</span>
         ) : (
-          `${kpi.unit}${kpi.value.toLocaleString()}`
+          fmtKpi(kpi.value, kpi.unit)
         )}
       </p>
       {change !== null && (

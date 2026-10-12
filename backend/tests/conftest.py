@@ -9,6 +9,17 @@ import pytest
 from app.config import settings
 
 
+@pytest.fixture(autouse=True)
+def _offline_llm(monkeypatch: pytest.MonkeyPatch):
+    """测试默认离线：无论本机 .env 如何配置，一律 replay + 无 key，杜绝真实联网调用。"""
+    import app.services.llm.client as client_mod
+    import app.services.llm.fixtures as fixtures_mod
+
+    offline = dataclasses.replace(settings, fixture_mode="replay", llm_api_key="")
+    monkeypatch.setattr(client_mod, "settings", offline)
+    monkeypatch.setattr(fixtures_mod, "settings", offline)
+
+
 @pytest.fixture
 def llm_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """把固件目录指向临时目录，并固定 replay 模式。
@@ -20,7 +31,9 @@ def llm_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """
     fixture_dir = tmp_path / "fixtures"
     fixture_dir.mkdir()
-    test_settings = dataclasses.replace(settings, fixture_dir=fixture_dir, fixture_mode="replay")
+    test_settings = dataclasses.replace(
+        settings, fixture_dir=fixture_dir, fixture_mode="replay", llm_api_key=""
+    )
 
     import app.services.llm.client as client_mod
     import app.services.llm.fixtures as fixtures_mod

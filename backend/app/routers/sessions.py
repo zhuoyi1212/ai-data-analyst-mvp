@@ -50,7 +50,41 @@ def from_sample(payload: dict) -> dict:
 
 @router.get("")
 def list_sessions() -> dict:
-    return {"sessions": _store().list_sessions()}
+    store = _store()
+    summaries = [
+        _session_summary(store, meta) for meta in store.list_sessions()
+    ]
+    summaries.sort(key=lambda m: m["created_at"], reverse=True)
+    return {"sessions": summaries}
+
+
+def _session_summary(store: SessionStore, meta: dict) -> dict:
+    """把原始 meta 精简为列表摘要，并推导分析状态（auto.json 的 status）。"""
+    sid = meta.get("session_id", "")
+    status = "upload"
+    if store.has_artifact(sid, "auto"):
+        try:
+            auto = store.read_artifact(sid, "auto")
+            status = auto.get("status") or "upload"
+        except StorageError:
+            status = "upload"
+    return {
+        "session_id": sid,
+        "filename": meta.get("filename", ""),
+        "created_at": meta.get("created_at", ""),
+        "shape": meta.get("shape", {"rows": 0, "cols": 0}),
+        "source_sample": meta.get("source_sample"),
+        "status": status,
+    }
+
+
+@router.delete("/{session_id}")
+def delete_session(session_id: str) -> dict:
+    try:
+        _store().delete_session(session_id)
+    except StorageError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"deleted": session_id}
 
 
 @router.get("/{session_id}")

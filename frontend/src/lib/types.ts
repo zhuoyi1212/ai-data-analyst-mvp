@@ -12,6 +12,15 @@ export interface SessionMeta {
   plan_hash?: string;
 }
 
+export interface SessionSummary {
+  session_id: string;
+  filename: string;
+  created_at: string;
+  shape: { rows: number; cols: number };
+  source_sample?: string;
+  status: string; // upload | running | waiting_input | completed | failed
+}
+
 export interface Preview {
   columns: string[];
   rows: Record<string, string | number | null>[];
@@ -373,6 +382,24 @@ export interface FailedView {
   reason: string;
 }
 
+export interface DashboardTheme {
+  theme_id: string;
+  name: string;
+  view_ids: string[];
+  summary: string;
+}
+
+export interface CollapseMember {
+  view_id: string;
+  dimension_label: string;
+}
+
+export interface CollapseGroup {
+  group_id: string;
+  label: string;
+  members: CollapseMember[];
+}
+
 export interface DashboardArtifact {
   run_id: string;
   bundle_id: string;
@@ -387,6 +414,8 @@ export interface DashboardArtifact {
   risks: Finding[];
   failed_views: FailedView[];
   global_filters: FilterDefinition[];
+  themes?: DashboardTheme[];
+  collapse_groups?: CollapseGroup[];
   layout: DashboardLayout | null;
 }
 

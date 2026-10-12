@@ -17,6 +17,7 @@ import type {
   RecommendedQuestion,
   RunSummary,
   SessionMeta,
+  SessionSummary,
   ValidationReport,
   ViewDataEnvelope,
 } from "./types";
@@ -74,6 +75,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 const get = <T>(path: string) => request<T>(path, { method: "GET" });
+const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
 export const api = {
   health: () => get<{ status: string; fixture_mode: string; llm_configured: boolean }>("/health"),
@@ -91,6 +93,8 @@ export const api = {
     post<{ meta: SessionMeta; preview: Preview }>("/sessions/from-sample", { filename }),
   getSession: (id: string) => get<{ meta: SessionMeta }>(`/sessions/${id}`),
   getPreview: (id: string) => get<Preview>(`/sessions/${id}/preview`),
+  listSessions: () => get<{ sessions: SessionSummary[] }>("/sessions"),
+  deleteSession: (id: string) => del<{ deleted: string }>(`/sessions/${id}`),
 
   generateProfile: (id: string) =>
     post<{ dictionary: DataDictionary }>(`/sessions/${id}/profile/generate`, {}),

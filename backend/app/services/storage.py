@@ -113,6 +113,13 @@ class SessionStore:
                 metas.append(json.loads(meta_file.read_text(encoding="utf-8")))
         return metas
 
+    def delete_session(self, session_id: str) -> None:
+        """删除会话目录及全部产物（不可恢复，调用方需先确认）。"""
+        d = self.base_dir / session_id
+        if not d.is_dir():
+            raise StorageError(f"会话不存在：{session_id}")
+        shutil.rmtree(d)
+
     # ---- 产物读写 ----
     def write_artifact(self, session_id: str, name: str, payload: Any) -> Path:
         d = self.session_dir(session_id)

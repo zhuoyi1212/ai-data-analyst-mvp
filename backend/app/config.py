@@ -22,6 +22,7 @@ class Settings:
     fixture_dir: Path
     storage_dir: Path
     sample_data_dir: Path
+    cors_origins: tuple[str, ...]  # 浏览器直连后端时允许的来源（逗号分隔）
 
     # 上传边界（FR-1）
     max_file_mb: int = 20
@@ -33,6 +34,22 @@ class Settings:
     # LLM 行为
     llm_timeout_sec: int = 60
     llm_max_repair: int = 2  # 契约失败后的有限自动修复次数
+
+
+_DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3100",
+    "http://127.0.0.1:3100",
+)
+
+
+def _parse_origins() -> tuple[str, ...]:
+    raw = os.getenv("CORS_ORIGINS", "").strip()
+    if not raw:
+        return _DEFAULT_CORS_ORIGINS
+    origins = tuple(o.strip() for o in raw.split(",") if o.strip())
+    return origins or _DEFAULT_CORS_ORIGINS
 
 
 def _build() -> Settings:
@@ -47,6 +64,7 @@ def _build() -> Settings:
         fixture_dir=BACKEND_DIR / "tests" / "fixtures" / "llm",
         storage_dir=BACKEND_DIR / "storage",
         sample_data_dir=ROOT_DIR / "sample_data",
+        cors_origins=_parse_origins(),
     )
 
 

@@ -83,7 +83,9 @@ async def fixture_missing_handler(_: Request, exc: FixtureMissingError) -> JSONR
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=list(settings.cors_origins),
+    # 允许 Vercel 预览/生产域名（https://<project>.vercel.app 及各 preview 分支）
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

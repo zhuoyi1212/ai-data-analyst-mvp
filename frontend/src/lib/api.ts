@@ -1,4 +1,5 @@
-// 后端 API 客户端：统一经 Next.js rewrite 到 127.0.0.1:8000。
+// 后端 API 客户端：统一经 Next.js rewrite（/api/backend/* → BACKEND_URL）。
+// 本地默认 127.0.0.1:8000；部署时由 BACKEND_URL 指定远端后端。
 // 所有错误均提取后端中文 detail，绝不在前端伪造任何数据结果。
 
 import type {
@@ -151,6 +152,8 @@ export const api = {
     post<unknown>(`/sessions/${id}/analysis-bundle/execute`, {}),
   postDashboard: (id: string) =>
     post<DashboardArtifact>(`/sessions/${id}/dashboard`, {}),
+  refreshFindings: (id: string) =>
+    post<DashboardArtifact>(`/sessions/${id}/dashboard/findings/refresh`),
   getDashboard: (id: string) =>
     get<DashboardArtifact>(`/sessions/${id}/dashboard`),
   refineDashboard: (

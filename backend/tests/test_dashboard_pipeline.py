@@ -186,3 +186,26 @@ def test_fill_blank_dimensions_labels_nan():
     df = pd.DataFrame({"区域": ["华东", None, "华南"], "value": [1.0, 2.0, 3.0]})
     out = _fill_blank_dimensions(df, ["区域"])
     assert list(out["区域"]) == ["华东", "未填写", "华南"]
+
+
+def test_cached_trend_restores_period_metadata_without_changing_results(tmp_path):
+    """旧版本月份图从已执行计划恢复展示周期，保留原始时间戳和数值。"""
+    import json
+
+    store, sid = _ready_dashboard(tmp_path)
+    artifact = synthesize_dashboard(sid, store)
+    saved = artifact.model_dump(mode="json")
+    trend_ids = [vid for vid, card in saved["views"].items() if card["type"] == "trend"]
+    assert trend_ids
+    for card in saved["views"].values():
+        if card["chart_spec"]:
+            card["chart_spec"].pop("time_granularity", None)
+    path = store.run_dir(sid, artifact.run_id) / "dashboard.json"
+    path.write_text(json.dumps(saved, ensure_ascii=False))
+    original_bytes = path.read_bytes()
+
+    restored = synthesize_dashboard(sid, store)
+    for view_id in trend_ids:
+        assert restored.views[view_id].chart_spec.time_granularity.value == "month"
+        assert restored.views[view_id].data.model_dump(mode="json") == saved["views"][view_id]["data"]
+    assert path.read_bytes() == original_bytes

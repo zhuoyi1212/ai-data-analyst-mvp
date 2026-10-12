@@ -26,6 +26,8 @@ import {
   SectionTitle,
   Spinner,
 } from "@/components/ui";
+import { CollapseCard } from "@/components/workspace/WorkspaceDashboard";
+import { chartGridClass, collapseMemberIds, overviewKpiIndex } from "@/lib/dashboard-layout";
 import { ViewChartCard } from "@/components/dashboard/DashboardChart";
 
 function ChartCardBlock({ card, runId }: { card: ViewCard; runId: string }) {
@@ -312,6 +314,14 @@ export default function WorkbenchPage() {
   const [highlightedView, setHighlightedView] = useState<string | null>(null);
   const [showAllInsights, setShowAllInsights] = useState(false);
 
+  const collapsedIds = new Set(
+    (artifact?.collapse_groups ?? []).flatMap((group) => group.members.flatMap(collapseMemberIds)),
+  );
+  const hiddenAnalysisCount = artifact?.layout?.items.filter((item) =>
+    item.default_hidden && !collapsedIds.has(item.item_id) &&
+    overviewKpiIndex(artifact, item.item_id) < 0,
+  ).length ?? 0;
+
   // 切换运行版本时折叠隐藏分析区、清除证据高亮与就地展开状态
   useEffect(() => {
     setShowHidden(false);
@@ -393,7 +403,12 @@ export default function WorkbenchPage() {
   const jumpToEvidence = useCallback((viewId: string) => {
     setShowHidden(true);
     window.setTimeout(() => {
-      const el = document.getElementById(`evidence-${viewId}`);
+      const group = artifact?.collapse_groups?.find((candidate) =>
+        candidate.members.some((member) => collapseMemberIds(member).includes(viewId)),
+      );
+      const kpiIndex = artifact ? overviewKpiIndex(artifact, viewId) : -1;
+      const el = document.getElementById(group ? `evidence-group-${group.group_id}` :
+        kpiIndex >= 0 ? `evidence-kpi-${kpiIndex}` : `evidence-${viewId}`);
       if (!el) return;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       setHighlightedView(viewId);
@@ -402,7 +417,7 @@ export default function WorkbenchPage() {
         2000,
       );
     }, 60);
-  }, []);
+  }, [artifact]);
 
   const openHistory = useCallback(async () => {
     setShowHistory(true);
@@ -625,8 +640,8 @@ export default function WorkbenchPage() {
               <>
                 {artifact.kpis.length > 0 && (
                   <div className="mb-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    {artifact.kpis.map((k) => (
-                      <KpiCard key={k.label} kpi={k} />
+                    {artifact.kpis.map((k, index) => (
+                      <div key={k.label} id={`evidence-kpi-${index}`} className="scroll-mt-24"><KpiCard kpi={k} /></div>
                     ))}
                   </div>
                 )}
@@ -719,15 +734,18 @@ export default function WorkbenchPage() {
 
                 {artifact.layout ? (
                   <>
-                    {/* Insight-first：按 layout 的 order 排序 + role/col_span/row_span
-                        真实渲染。Hero 全宽主图且更高（row_span=2），Primary 次之，
-                        Supporting 降权，低价值默认折叠。 */}
-                    <div className="grid grid-cols-12 gap-4">
+                    {/* 合并变体只占一个展示位；少分类图并排，趋势与明细占整行。 */}
+                    <div className="grid grid-cols-12 items-start gap-4">
+                      {(artifact.collapse_groups ?? []).map((group) => (
+                        <CollapseCard key={`${artifact.run_id}:${group.group_id}`} group={group}
+                          dashboard={artifact} preferredViewId={highlightedView ?? undefined} />
+                      ))}
                       {[...artifact.layout.items]
                         .sort((a, b) => a.order - b.order)
                         .filter(
                           (it) =>
-                            it.role !== "kpi" && it.role !== "findings",
+                            it.role !== "kpi" && it.role !== "findings" &&
+                            !collapsedIds.has(it.item_id) && overviewKpiIndex(artifact, it.item_id) < 0,
                         )
                         .map((it) => {
                           const card = artifact.views[it.item_id];
@@ -736,29 +754,11 @@ export default function WorkbenchPage() {
                             it.default_hidden &&
                             !revealed.has(it.item_id) &&
                             !showHidden;
-                          // row_span 表示纵向跨行数（Hero=2 应更高一档）：以其乘算
-                          // role 基准高度，使 row_span 真实参与渲染。Hero=2×190=380
-                          // 与既往一致，不回退视觉；后端改 row_span 时表现随之变化。
-                          const roleBase =
-                            it.role === "hero"
-                              ? 190
-                              : it.role === "primary"
-                                ? 300
-                                : 260;
-                          const height =
-                            roleBase * Math.max(1, it.row_span || 1);
-                          const span = Math.max(
-                            1,
-                            Math.min(12, it.col_span || 12),
-                          );
                           return (
                             <div
                               key={it.item_id}
                               id={`evidence-${it.item_id}`}
-                              style={{
-                                gridColumn: `span ${span} / span ${span}`,
-                              }}
-                              className={`scroll-mt-24 transition-shadow duration-500 ${
+                              className={`${chartGridClass(card)} min-w-0 scroll-mt-24 rounded-3xl border border-hairline bg-white p-4 shadow-card transition-shadow duration-500 ${
                                 highlightedView === it.item_id
                                   ? "shadow-pop ring-2 ring-apple"
                                   : ""
@@ -779,9 +779,6 @@ export default function WorkbenchPage() {
                                         {card.interpretation}
                                       </span>
                                     )}
-                                    <span className="mt-1 block text-xs text-faint">
-                                      {it.rationale}
-                                    </span>
                                   </span>
                                   <span className="shrink-0 text-xs font-medium text-apple">
                                     展开
@@ -815,11 +812,10 @@ export default function WorkbenchPage() {
                                       {card.interpretation}
                                     </p>
                                   )}
-                                  <div className="mt-4">
+                                  <div className="mt-3">
                                     <ViewChartCard
                                       key={`${artifact.run_id}:${card.view_id}`}
                                       card={card}
-                                      chartHeight={height}
                                     />
                                   </div>
                                 </>
@@ -828,7 +824,7 @@ export default function WorkbenchPage() {
                           );
                         })}
                     </div>
-                    {artifact.layout.items.some((i) => i.default_hidden) && (
+                    {hiddenAnalysisCount > 0 && (
                       <div className="mt-5 text-center">
                         <button
                           onClick={() => setShowHidden((v) => !v)}
@@ -836,11 +832,7 @@ export default function WorkbenchPage() {
                         >
                           {showHidden
                             ? "收起全部隐藏分析"
-                            : `显示全部隐藏分析（${
-                                artifact.layout.items.filter(
-                                  (i) => i.default_hidden,
-                                ).length
-                              }）`}
+                            : `显示全部隐藏分析（${hiddenAnalysisCount}）`}
                         </button>
                       </div>
                     )}

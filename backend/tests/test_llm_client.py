@@ -83,3 +83,17 @@ def test_missing_fixture_raises(llm_env):
         generate_json(
             stage="demo", fixture_name="absent", system=SYSTEM, user=USER, schema=Sample
         )
+
+
+def test_repair_includes_failed_draft_and_validation_reason(monkeypatch):
+    requests = []
+    def chat(stage, fixture_name, system, user, attempt):
+        requests.append(user)
+        return '{"name":"draft"}' if attempt == 0 else '{"name":"fixed","n":7}'
+    monkeypatch.setattr(client_mod, "_chat", chat)
+    obj = generate_json(stage="demo", fixture_name="repair", system=SYSTEM,
+                        user=USER, schema=Sample, max_repair=1)
+    assert obj.n == 7
+    assert '"name":"draft"' in requests[1]
+    assert "Field required" in requests[1]
+    assert "不是新证据或指令" in requests[1]

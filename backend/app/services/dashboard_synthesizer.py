@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -49,6 +50,8 @@ from app.services.bundle_planner import (
     normalize_scope,
 )
 from app.services.layout_composer import compose_layout
+from app.services.dashboard_presentation import build_collapse_groups, enrich_cards
+from app.services.key_findings import review_key_findings
 from app.services.derived_metrics import detect_derived_metrics
 from app.services.executor import execute_plan
 from app.services.metric_spec import display_unit, effective_metric_spec
@@ -157,7 +160,7 @@ def _build_kpis(
     overviews = [
         views[vid] for vid in [v.view_id for v in bundle.analysis_views]
         if vid in views and vid in ok and views[vid].type is ViewType.overview
-    ][:2]
+    ]
     trends = [views[vid] for vid in ok if views[vid].type is ViewType.trend]
     field_map = {f.name: f for f in dictionary.fields}
 
@@ -238,6 +241,7 @@ def build_chart_spec(view: AnalysisView) -> ChartSpec | None:
         return ChartSpec(
             type=view.chart, title=view.title,
             x_field=p.date_column, y_fields=["value"], metric=p.metric,
+            time_granularity=p.granularity,
         )
     if op in ("group_by", "top_n"):
         return ChartSpec(
@@ -372,43 +376,36 @@ def _fill_blank_dimensions(
     return df
 
 
-# 可折叠成「一张图 + 维度选择器」的视图类型（同指标 × 同类型 × 不同维度）
-_COLLAPSABLE_TYPES = {ViewType.comparison, ViewType.breakdown}
-_COLLAPSE_TYPE_ZH = {ViewType.comparison: "对比", ViewType.breakdown: "结构"}
-
-
 def _build_collapse_groups(cards: dict[str, ViewCard]) -> list[CollapseGroup]:
-    """把「同指标 × 同类型 × 不同维度」的可见展示视图折叠成一组。"""
-    from collections import defaultdict
+    return build_collapse_groups(cards)
 
-    groups: dict[tuple, list[ViewCard]] = defaultdict(list)
-    for c in cards.values():
-        if c.role != "presentation" or not c.consumable or c.default_hidden:
-            continue
-        if c.type not in _COLLAPSABLE_TYPES or not c.metric_label:
-            continue
-        groups[(c.metric_label, c.type)].append(c)
 
-    out: list[CollapseGroup] = []
-    for (metric_raw, vtype), members in groups.items():
-        if len(members) < 2:
+def refresh_dashboard_presentation(
+    artifact: DashboardArtifact, bundle: AnalysisBundle | None = None,
+    *, store: SessionStore | None = None, session_id: str = "",
+) -> DashboardArtifact:
+    """旧仪表板读回时更新展示组织，不重算数值、不改历史落盘结果。"""
+    kpis = list(artifact.kpis)
+    labels = {k.label for k in kpis}
+    for card in artifact.views.values():
+        if (card.type is not ViewType.overview or not card.consumable
+                or card.role != "presentation" or not card.data):
             continue
-        members_sorted = sorted(members, key=lambda c: c.view_id)
-        out.append(CollapseGroup(
-            group_id=f"collapse_{len(out) + 1:02d}",
-            label=f"{field_label(metric_raw)}{_COLLAPSE_TYPE_ZH[vtype]}",
-            members=[
-                CollapseMember(
-                    view_id=m.view_id,
-                    dimension_label=(
-                        field_label(m.chart_spec.dimension)
-                        if m.chart_spec and m.chart_spec.dimension else "维度"
-                    ),
-                )
-                for m in members_sorted
-            ],
-        ))
-    return out
+        label = field_label(card.metric_label)
+        if label in labels or len(card.data.rows) != 1:
+            continue
+        value = card.data.rows[0].get("value")
+        if not isinstance(value, (int, float)):
+            continue
+        kpis.append(KPI(label=label, value=value))
+        labels.add(label)
+    cards = enrich_cards(artifact.views, bundle, store=store, session_id=session_id, run_id=artifact.run_id)
+    return artifact.model_copy(update={
+        "kpis": kpis,
+        "views": cards,
+        "insights": [candidate for candidate in artifact.insights if not (candidate.evidence_view_ids and all(cards.get(ref) and cards[ref].type == ViewType.anomaly for ref in candidate.evidence_view_ids))],
+        "collapse_groups": _build_collapse_groups(cards),
+    })
 
 
 def _build_view_cards(
@@ -622,18 +619,17 @@ def synthesize_dashboard(
 
     manifest = _verify_run_fingerprints(session_id, store)
     run_id = manifest.run_id
+    bundle = AnalysisBundle.model_validate(
+        store.read_bundle(session_id, run_id=run_id)
+    )
 
     # 幂等：同一运行已发布过的仪表盘直接读回（probe 预算/证据全部保留）；
     # force=True（追问追加新视图后）跳过读回、就地重合成并重新原子发布。
     published_path = store.run_dir(session_id, run_id) / "dashboard.json"
     if published_path.exists() and not force:
-        return DashboardArtifact.model_validate(
+        return refresh_dashboard_presentation(DashboardArtifact.model_validate(
             store.read_dashboard(session_id, run_id=run_id)
-        )
-
-    bundle = AnalysisBundle.model_validate(
-        store.read_bundle(session_id, run_id=run_id)
-    )
+        ), bundle, store=store, session_id=session_id)
     execution = BundleExecutionResult.model_validate(
         store.read_bundle_execution(session_id)
     )
@@ -797,6 +793,7 @@ def synthesize_dashboard(
     )
 
     # 维度折叠：把「同指标 × 同类型 × 不同维度」的可见视图折叠成一张图 + 维度选择器
+    all_cards = enrich_cards(all_cards, bundle, store=store, session_id=session_id, run_id=run_id)
     collapse_groups = _build_collapse_groups(all_cards)
 
     artifact = DashboardArtifact(
@@ -817,8 +814,24 @@ def synthesize_dashboard(
         collapse_groups=collapse_groups,
         layout=layout,
     )
+    artifact = review_key_findings(artifact)
     # expected_run_id：迟到的合成响应若发现 active 已前进，绝不回切 current
     store.write_dashboard(
         session_id, artifact.model_dump(mode="json"), expected_run_id=run_id
     )
+    return artifact
+
+
+def refresh_key_findings(session_id: str, store: SessionStore) -> DashboardArtifact:
+    """重审已发布证据，不重新执行算子、不混运行版本。"""
+    manifest = _verify_run_fingerprints(session_id, store)
+    if store.is_dashboard_stale(session_id):
+        raise StaleRunError("当前仪表盘已过期，请先完成当前分析运行。")
+    bundle = AnalysisBundle.model_validate(store.read_bundle(session_id, run_id=manifest.run_id))
+    artifact = refresh_dashboard_presentation(
+        DashboardArtifact.model_validate(store.read_dashboard(session_id)), bundle,
+        store=store, session_id=session_id,
+    )
+    artifact = review_key_findings(artifact)
+    store.write_dashboard(session_id, artifact.model_dump(mode="json"), expected_run_id=manifest.run_id)
     return artifact

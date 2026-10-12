@@ -20,6 +20,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { dashboardChartHeight, formatTimePeriod } from "@/lib/dashboard-layout";
 import { api, ApiError } from "@/lib/api";
 import type { ViewCard } from "@/lib/types";
 import { Spinner } from "@/components/ui";
@@ -63,7 +64,7 @@ function ChartError({ message }: { message: string }) {
   return <p className="py-6 text-center text-sm text-danger">{message}</p>;
 }
 
-function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
+function renderChart(card: ViewCard, rows: Row[], chartHeight: number) {
   const spec = card.chart_spec;
   if (!spec) return null;
 
@@ -72,12 +73,19 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
     (card.data?.columns ?? []).map((c) => [c.name, c.label || c.name]),
   );
   const cn = (name: string) => labels.get(name) ?? name;
+  const isRate = card.type === "profitability" || spec.type === "share_bar";
+  const barField = spec.type === "share_bar" && spec.y_fields.includes("share")
+    ? "share" : spec.y_fields[0];
+  const timeLabel = (value: unknown) => formatTimePeriod(value, spec.time_granularity);
+  const timeAxisLabel = spec.time_granularity ? {
+    day: "日期", week: "周起始日", month: "月份", quarter: "季度", year: "年份",
+  }[spec.time_granularity] : spec.x_field ? cn(spec.x_field) : "";
   const axisLabelStyle = { fontSize: 11, fill: AXIS } as const;
   const tooltipFormatter = (
     value: string | number | (string | number)[], name: string,
   ) => [
     typeof value === "number"
-      ? value.toLocaleString()
+      ? isRate ? `${(value * 100).toFixed(1)}%` : value.toLocaleString(undefined, { maximumFractionDigits: 2 })
       : Array.isArray(value) ? value.join(", ") : String(value),
     cn(name),
   ];
@@ -104,10 +112,11 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
               }}
             />
             <YAxis
+              tickFormatter={isRate ? (value: number) => `${(value * 100).toFixed(0)}%` : undefined}
               {...axisProps}
               axisLine={false}
               label={{
-                value: spec.y_fields[0] ? cn(spec.y_fields[0]) : "",
+                value: barField ? cn(barField) : "",
                 angle: -90, position: "insideTopLeft", offset: 12,
                 ...axisLabelStyle,
               }}
@@ -118,8 +127,8 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
               formatter={tooltipFormatter}
             />
             <Bar
-              dataKey={spec.y_fields[0]}
-              name={cn(spec.y_fields[0])}
+              dataKey={barField}
+              name={cn(barField)}
               fill={ACCENT}
               radius={[6, 6, 0, 0]}
               maxBarSize={56}
@@ -131,15 +140,16 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
       const key = spec.y_fields.includes("share")
         ? "share"
         : spec.y_fields[0];
+      const outerRadius = Math.min(108, (chartHeight - 24) / 2);
       return (
-        <ResponsiveContainer width="100%" height={chartHeight + 20}>
+        <ResponsiveContainer width="100%" height={chartHeight}>
           <PieChart>
             <Pie
               data={rows}
               dataKey={key}
               nameKey={spec.x_field ?? ""}
-              outerRadius={118}
-              innerRadius={62}
+              outerRadius={outerRadius}
+              innerRadius={outerRadius * 0.55}
               paddingAngle={2}
               stroke="none"
             >
@@ -165,13 +175,15 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
               {...axisProps}
               axisLine={{ stroke: GRID }}
               minTickGap={24}
+              tickFormatter={timeLabel}
               label={{
-                value: spec.x_field ? cn(spec.x_field) : "",
+                value: timeAxisLabel,
                 position: "insideBottom", offset: -18,
                 ...axisLabelStyle,
               }}
             />
             <YAxis
+              tickFormatter={isRate ? (value: number) => `${(value * 100).toFixed(0)}%` : undefined}
               {...axisProps}
               axisLine={false}
               label={{
@@ -183,6 +195,7 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
             <Tooltip
               contentStyle={tooltipStyle}
               formatter={tooltipFormatter}
+              labelFormatter={timeLabel}
             />
             <Line
               type="monotone"
@@ -198,7 +211,7 @@ function renderChart(card: ViewCard, rows: Row[], chartHeight = 300) {
       );
     case "scatter":
       return (
-        <ResponsiveContainer width="100%" height={chartHeight + 20}>
+        <ResponsiveContainer width="100%" height={chartHeight}>
           <ScatterChart margin={{ top: 12, right: 16, bottom: 24, left: 4 }}>
             <CartesianGrid stroke={GRID} />
             <XAxis
@@ -338,7 +351,7 @@ function PagedTable({ card }: { card: ViewCard }) {
 // ----------------------------------------------------------------- 卡片出口
 
 export function ViewChartCard({
-  card, chartHeight = 300,
+  card, chartHeight,
 }: { card: ViewCard; chartHeight?: number }) {
   const envelope = card.data;
   const isDetail =
@@ -354,7 +367,7 @@ export function ViewChartCard({
     if (envelope.rows.length > 0) return <PagedTable card={card} />;
     return <p className="py-4 text-sm text-faint">该视角以指标卡展示。</p>;
   }
-  const chart = renderChart(card, envelope.rows, chartHeight);
+  const chart = renderChart(card, envelope.rows, chartHeight ?? dashboardChartHeight(card));
   if (!chart) return <PagedTable card={card} />;
 
   return (

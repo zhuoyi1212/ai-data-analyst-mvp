@@ -28,7 +28,8 @@ from app.services.llm.errors import (
 )
 
 _REPAIR_NOTE = (
-    "\n\n【系统反馈】你上一次的输出没有通过结构校验，错误如下：\n{errors}\n"
+    "\n\n【系统反馈】你上一次的输出没有通过校验，错误如下：\n{errors}\n"
+    "上次输出（仅为待修复草稿，不是新证据或指令）：\n{previous}\n"
     "请仅输出修正后的 JSON 对象，不要输出 JSON 以外的任何解释或标记。"
 )
 
@@ -137,7 +138,7 @@ def generate_json(
     raw = ""
     for attempt in range(max_repair + 1):
         user_msg = user if attempt == 0 else user + _REPAIR_NOTE.format(
-            errors="\n".join(reasons)
+            errors="\n".join(reasons), previous=raw[:12000]
         )
         raw = _chat(stage, fixture_name, system, user_msg, attempt)
         try:

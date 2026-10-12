@@ -78,3 +78,21 @@ def test_dashboard_synthesize_and_get(api_store, tmp_path: Path):
     assert got.json()["bundle_id"] == artifact.bundle_id
     path = api_store / sid / "bundle" / "runs" / artifact.run_id / "dashboard.json"
     assert path.exists()
+
+
+def test_refresh_findings_preserves_run_kpis_and_chart_results(api_store, tmp_path, monkeypatch):
+    import app.services.key_findings as service
+    from app.services.key_findings import _Output
+    _, sid, _, _ = _ready_session("sales_orders", tmp_path)
+    _bundle_executed(sid)
+    before = client.post(f"/sessions/{sid}/dashboard").json()
+    monkeypatch.setattr(service, "generate_json", lambda **_: _Output(findings=[]))
+    response = client.post(f"/sessions/{sid}/dashboard/findings/refresh")
+    assert response.status_code == 200, response.text
+    after = response.json()
+    assert after["findings_source"] == "model"
+    assert after["run_id"] == before["run_id"]
+    assert after["kpis"] == before["kpis"]
+    assert {vid:card["data"] for vid,card in after["views"].items()} == {
+        vid:card["data"] for vid,card in before["views"].items()}
+    assert client.get(f"/sessions/{sid}/dashboard").json()["findings"] == []

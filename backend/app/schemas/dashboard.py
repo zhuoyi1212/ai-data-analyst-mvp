@@ -17,7 +17,7 @@ from app.schemas.bundle import (
     ViewValidationItem,
     ValidationLevel,
 )
-from app.schemas.common import ChartType
+from app.schemas.common import ChartType, TimeGranularity
 from app.schemas.insight_candidate import InsightCandidate
 
 # ----------------------------------------------------------------- 图表规格
@@ -39,6 +39,8 @@ class ChartSpec(BaseModel):
     dimension: str | None = None      # 维度图的分组字段（交互联动用）
     metric: str | None = None         # 主度量业务名（展示用，不作为绘图字段）
     interactive: bool = False         # 维度图置 True（全局筛选/下钻联动）
+    time_granularity: TimeGranularity | None = None  # 时间轴展示周期，来自执行计划
+    aggregation: str | None = None
 
 
 # ----------------------------------------------------------------- KPI
@@ -154,6 +156,8 @@ class ViewCard(BaseModel):
 
     # Task 7：深挖链探针卡（id 与普通 view 同字典，但 ref_type=probe）
     ref_type: Literal["view", "probe"] = "view"
+    scope_key: str = ""
+    scope_label: str = "全部数据"
 
 
 # ----------------------------------------------------------------- 筛选/范围
@@ -215,10 +219,7 @@ class DrilldownSuggestion(BaseModel):
 
 # ----------------------------------------------------------------- Findings
 
-FindingType = Literal[
-    "growth", "decline", "anomaly", "risk",
-    "opportunity", "structure", "relationship",
-]
+FindingType = str  # 业务主题开放，不以固定信号类型限制模型的发现
 Importance = Literal["high", "medium", "low"]
 
 
@@ -283,6 +284,11 @@ class CollapseMember(BaseModel):
 
     view_id: str
     dimension_label: str  # 中文维度名（如「客户细分」「类别」）
+    view_ids: list[str] = Field(default_factory=list)  # 相同结果的证据别名
+    scope_label: str = "全部数据"
+    metric_label: str = ""
+    measure_label: str = "金额"
+    variant_label: str = ""
 
 
 class CollapseGroup(BaseModel):
@@ -293,6 +299,7 @@ class CollapseGroup(BaseModel):
     group_id: str
     label: str  # 如「利润对比」「销售额结构」
     members: list[CollapseMember] = Field(default_factory=list)
+    kind: Literal["dimension", "ranking", "trend"] = "dimension"
 
 
 class DashboardArtifact(BaseModel):
@@ -314,6 +321,9 @@ class DashboardArtifact(BaseModel):
     themes: list[DashboardTheme] = Field(default_factory=list)  # AI 业务主题分类
     collapse_groups: list[CollapseGroup] = Field(default_factory=list)  # 维度折叠组
     layout: "DashboardLayout | None" = None  # Task 7：12-column 组合布局
+    findings_version: int = 0
+    findings_source: str = "rules"
+    findings_notice: str = ""
 
 
 # ------------------------------------------------------- Task 7 布局契约

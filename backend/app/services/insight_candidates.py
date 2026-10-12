@@ -143,6 +143,8 @@ def _finding_for(
 def _signals_to_drafts(signals: list[Signal], findings: list[Finding]) -> list[_Draft]:
     drafts: list[_Draft] = []
     for sig in signals:
+        if sig.type == "anomaly":
+            continue  # 单独的 IQR 扫描保留为核查证据，不升级为业务洞察。
         insight_type = _SIGNAL_TO_INSIGHT.get(sig.type)
         if insight_type is None:
             if sig.type == "correlation":

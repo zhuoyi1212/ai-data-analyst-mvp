@@ -23,7 +23,11 @@ from app.schemas.dashboard import (
 )
 from app.services.bundle_executor import execute_bundle
 from app.services.bundle_planner import normalize_scope, refine_bundle
-from app.services.dashboard_synthesizer import synthesize_dashboard
+from app.services.dashboard_synthesizer import (
+    refresh_dashboard_presentation,
+    refresh_key_findings,
+    synthesize_dashboard,
+)
 from app.services.storage import SessionStore, StaleRunError, StorageError
 from app.services.view_data import (
     build_columns,
@@ -71,7 +75,11 @@ def get_dashboard(session_id: str) -> dict:
                 f"已发布仪表盘属于旧运行版本（{cur}），当前工作流运行是 {act}，"
                 "请重新执行并合成后再查看；旧版本仍可审计。"
             )
-        return store.read_dashboard(session_id)
+        artifact = DashboardArtifact.model_validate(store.read_dashboard(session_id))
+        bundle = AnalysisBundle.model_validate(
+            store.read_bundle(session_id, run_id=artifact.run_id or None)
+        )
+        return refresh_dashboard_presentation(artifact, bundle, store=store, session_id=session_id).model_dump(mode="json")
     except StaleRunError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except StorageError as exc:
@@ -137,7 +145,11 @@ def get_run_dashboard(session_id: str, run_id: str) -> dict:
     """历史运行仪表盘：审计只读，不影响 active/current 指针。"""
     store = SessionStore()
     try:
-        return store.read_dashboard(session_id, run_id=run_id)
+        artifact = DashboardArtifact.model_validate(
+            store.read_dashboard(session_id, run_id=run_id)
+        )
+        bundle = AnalysisBundle.model_validate(store.read_bundle(session_id, run_id=run_id))
+        return refresh_dashboard_presentation(artifact, bundle, store=store, session_id=session_id).model_dump(mode="json")
     except StorageError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -166,3 +178,14 @@ def get_view_rows(
     except StorageError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return envelope.model_dump(mode="json")
+
+
+@router.post("/dashboard/findings/refresh")
+def refresh_findings(session_id: str) -> dict:
+    store = SessionStore()
+    try:
+        return refresh_key_findings(session_id, store).model_dump(mode="json")
+    except StaleRunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except StorageError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

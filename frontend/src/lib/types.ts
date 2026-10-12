@@ -260,6 +260,8 @@ export interface ChartSpec {
   dimension: string | null;
   metric: string | null;
   interactive: boolean;
+  aggregation?: string | null;
+  time_granularity?: 'day' | 'week' | 'month' | 'quarter' | 'year' | null;
 }
 
 export interface ViewValidationItem {
@@ -291,6 +293,8 @@ export interface ViewCard {
   value_scores: Record<string, number>;
   // Task 7：普通视图 / 深挖探针
   ref_type?: 'view' | 'probe';
+  scope_key?: string;
+  scope_label?: string;
 }
 
 export interface KPI {
@@ -392,12 +396,18 @@ export interface DashboardTheme {
 export interface CollapseMember {
   view_id: string;
   dimension_label: string;
+  view_ids?: string[];
+  scope_label?: string;
+  metric_label?: string;
+  measure_label?: string;
+  variant_label?: string;
 }
 
 export interface CollapseGroup {
   group_id: string;
   label: string;
   members: CollapseMember[];
+  kind?: "dimension" | "ranking" | "trend";
 }
 
 export interface DashboardArtifact {
@@ -417,6 +427,9 @@ export interface DashboardArtifact {
   themes?: DashboardTheme[];
   collapse_groups?: CollapseGroup[];
   layout: DashboardLayout | null;
+  findings_version?: number;
+  findings_source?: string;
+  findings_notice?: string;
 }
 
 // ------------------------------------------------ Task 7：12-column 布局
